@@ -110,7 +110,7 @@ class SetupActivity : AppCompatActivity() {
         SetupStep.ACCESSIBILITY -> "Open Accessibility settings"
         SetupStep.NOTIFICATIONS -> "Open notification settings"
         SetupStep.BATTERY -> "Allow"
-        SetupStep.KEEP_PERMISSIONS -> "Open settings"
+        SetupStep.KEEP_PERMISSIONS -> "Open App info"
     }
 
     /** Starts the system flow that lets the participant turn [step] on. */

@@ -1,6 +1,7 @@
 package com.rahulislam.facepsy.setup
 
 import android.Manifest
+import android.app.AppOpsManager
 import android.content.Context
 import android.os.Build
 import android.os.PowerManager
@@ -51,7 +52,7 @@ enum class SetupStep(
     ),
     KEEP_PERMISSIONS(
             "Keep permissions",
-            "Android removes permissions from apps you haven't opened for a few months. Turn off \"Pause app activity if unused\" (or \"Remove permissions if app is unused\") so the study keeps working.",
+            "Android removes permissions from apps you haven't opened for a few months. On the next screen, scroll to the bottom and under \"Unused app settings\" turn off \"Manage app if unused\". (On some phones it is called \"Pause app activity if unused\" or \"Remove permissions if app is unused\".)",
             required = false,
             logKey = "KEEP_PERMISSIONS"
     );
@@ -59,7 +60,11 @@ enum class SetupStep(
     /** False if the step doesn't exist on this Android version. */
     fun isApplicable(context: Context): Boolean = when (this) {
         BATTERY -> Build.VERSION.SDK_INT >= Build.VERSION_CODES.M
-        KEEP_PERMISSIONS -> Build.VERSION.SDK_INT >= API_R && autoRevokeExempted(context) != null
+        // Hidden when unused-app permission removal can't apply to FacePsy at all (e.g.
+        // target SDK < 30 in the default mode: the system toggle is off and greyed out).
+        KEEP_PERMISSIONS -> Build.VERSION.SDK_INT >= API_R && autoRevokeExempted(context) != null &&
+                !(autoRevokeMode(context) == AppOpsManager.MODE_DEFAULT &&
+                        context.applicationInfo.targetSdkVersion < API_R)
         else -> true
     }
 
@@ -79,16 +84,32 @@ enum class SetupStep(
         /** Android 11 (API 30); not in the compile SDK (28). */
         const val API_R = 30
 
-        /**
-         * Whether the app is exempt from Android 11+ unused-app permission removal, via
-         * `PackageManager.isAutoRevokeWhitelisted()` (API 30, called reflectively because
-         * the compile SDK is 28). Null if unavailable.
-         */
-        fun autoRevokeExempted(context: Context): Boolean? = try {
-            context.packageManager.javaClass.getMethod("isAutoRevokeWhitelisted")
-                    .invoke(context.packageManager) as Boolean
+        /** App-op behind Android 11+ "Manage app if unused" / auto-revoke. */
+        private const val OP_AUTO_REVOKE = "android:auto_revoke_permissions_if_unused"
+
+        /** Current mode of [OP_AUTO_REVOKE] (`AppOpsManager.MODE_*`), or null if unavailable. */
+        fun autoRevokeMode(context: Context): Int? = try {
+            (context.getSystemService(Context.APP_OPS_SERVICE) as AppOpsManager)
+                    .checkOpNoThrow(OP_AUTO_REVOKE, context.applicationInfo.uid, context.packageName)
         } catch (e: Exception) {
             null
+        }
+
+        /**
+         * Whether the app is exempt from Android 11+ unused-app permission removal
+         * ("Manage app if unused" is off). Null if the feature doesn't exist here.
+         *
+         * `MODE_DEFAULT` means removal is on only for apps targeting SDK 30+, so a
+         * target-28 app is exempt without the participant doing anything.
+         */
+        fun autoRevokeExempted(context: Context): Boolean? {
+            if (Build.VERSION.SDK_INT < API_R) return null
+            return when (autoRevokeMode(context)) {
+                AppOpsManager.MODE_IGNORED -> true
+                AppOpsManager.MODE_ALLOWED -> false
+                AppOpsManager.MODE_DEFAULT -> context.applicationInfo.targetSdkVersion < API_R
+                else -> null
+            }
         }
 
         /**
