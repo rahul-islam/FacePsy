@@ -16,7 +16,6 @@ ext.versions = [
         navigation        : '1.0.0',
         workManager       : '2.3.4',
 
-        cameraX           : '1.0.0-alpha06',
         androidxMaterial  : '1.0.0'
 ]
 

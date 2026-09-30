@@ -37,6 +37,9 @@ object FirebaseRefs {
 
         /** One document per Stroop task response. */
         const val STROOP_DATA = "stroopData"
+
+        /** One document per uploaded capture-session audio file. */
+        const val AUDIO_RECORDINGS = "audioRecordings"
     }
 
     /** Documents inside the [Collections.CONFIG] collection. */
@@ -71,5 +74,8 @@ object FirebaseRefs {
         /** Cropped eye-region PNG for one captured frame; [side] is `LEFT` or `RIGHT`. */
         fun eyeRegion(uid: String, imageBaseName: String, side: String) =
             "eyeRegion/$uid/${imageBaseName}_$side.png"
+
+        /** Audio track (AAC in MP4) of one capture session. */
+        fun audio(uid: String, sessionName: String) = "audio/$uid/$sessionName.m4a"
     }
 }

@@ -1,30 +1,19 @@
 package com.rahulislam.facepsy
 
-import android.annotation.SuppressLint
 import android.app.Activity
 import android.content.Intent
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
-import android.os.Environment
-import android.os.Environment.getExternalStoragePublicDirectory
 import android.util.Log
-import android.util.Size
 import android.view.View
 import android.widget.Button
-import android.widget.TextView
-import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
-import com.cottacush.android.hiddencam.CaptureTimeFrequency
-import com.cottacush.android.hiddencam.HiddenCam
-import com.cottacush.android.hiddencam.OnImageCapturedListener
 import com.firebase.ui.auth.AuthUI
 import com.firebase.ui.auth.AuthUI.IdpConfig.EmailBuilder
 import com.google.firebase.auth.FirebaseAuth
-import com.rahulislam.facepsy.receiver.CaptureTriggerReceiver
 import com.rahulislam.facepsy.service.CrashRestartHandler
 import com.rahulislam.facepsy.setup.SetupMonitor
-import com.rahulislam.facepsy.setup.SetupStep
 import com.rahulislam.facepsy.service.SensingService
 import com.rahulislam.facepsy.service.ServiceAction
 import com.rahulislam.facepsy.service.ServiceState
@@ -33,37 +22,29 @@ import com.rahulislam.facepsy.tasks.flower.Flower3x3Activity
 import com.rahulislam.facepsy.tasks.stroop.StroopDescriptionActivity
 import com.rahulislam.facepsy.ui.InstructionActivity
 import com.rahulislam.facepsy.ui.SetupActivity
-import com.rahulislam.facepsy.util.hasPermissions
-import org.json.JSONObject
-import java.io.File
 import java.util.*
 
 /**
  * Home screen and app entry point (launcher activity).
  *
- * - Requests camera and storage permissions.
  * - Signs the participant in with FirebaseUI (email/password), then starts
  *   [SensingService], which runs data collection in the background.
+ * - Opens the setup checklist ([SetupActivity]) after sign-in and whenever a required
+ *   permission is missing.
  * - Offers buttons for the pre/post surveys (links from `config/survey`), the Stroop and
  *   Flower cognitive tasks, and the instructions screen.
  *
  * The launcher and pinned shortcuts refer to this class by name: **do not rename or
  * move it.**
  */
-class MainActivity : AppCompatActivity(), OnImageCapturedListener {
-    private lateinit var hiddenCam: HiddenCam
-    private lateinit var baseStorageFolder: File
-
+class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
 
         // Permissions are requested by SetupActivity (opened from onResume).
-        if (hasPermissions(SetupStep.CAMERA_STORAGE_PERMISSIONS)) onPermissionsGranted()
 
         Thread.setDefaultUncaughtExceptionHandler(CrashRestartHandler(this))
-
-        startCaptureFolderCounter()
 
         // NOTE: legacy behavior, see docs/known-issues.md — the (hidden) Start button
         // deliberately crashes the app; it was used to test CrashRestartHandler.
@@ -72,54 +53,8 @@ class MainActivity : AppCompatActivity(), OnImageCapturedListener {
             crashMe()
         }
 
-        // Legacy: folders from an earlier on-device processing pipeline; no longer used.
-        File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DCIM), "Inference").apply {
-            if (!exists()) mkdir()
-        }
-        File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DCIM + "/Inference"), "image").apply {
-            if (!exists()) mkdir()
-        }
-        File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DCIM + "/Inference"), "features").apply {
-            if (!exists()) mkdir()
-        }
-
-        // Legacy test broadcast; nothing receives it.
-        val intent = Intent()
-        intent.action = "com.rahulislam.broadcast.test"
-        intent.putExtra("packageName", "currentApp")
-        sendBroadcast(intent)
-
         signInOrStartService()
         setUpButtons()
-    }
-
-    /**
-     * Once per second, shows the number of frames waiting in `DCIM/HiddenCam` in the
-     * (hidden) image-count label.
-     */
-    private fun startCaptureFolderCounter() {
-        val imageCountTv: TextView = findViewById(R.id.imageCountTv)
-
-        val thread: Thread = object : Thread() {
-            @SuppressLint("SetTextI18n")
-            override fun run() {
-                try {
-                    while (!this.isInterrupted) {
-                        sleep(1000)
-                        runOnUiThread {
-                            val dcim = getExternalStoragePublicDirectory(Environment.DIRECTORY_DCIM + "/" + CaptureTriggerReceiver.CAPTURE_FOLDER_NAME)
-                            if (dcim.listFiles() != null) {
-                                val pics = dcim.listFiles().size
-                                imageCountTv.text = "Number of Images: $pics"
-                            }
-                        }
-                    }
-                } catch (e: InterruptedException) {
-                }
-            }
-        }
-
-        thread.start()
     }
 
     /** True right after returning from SetupActivity, so it isn't reopened in a loop. */
@@ -127,10 +62,6 @@ class MainActivity : AppCompatActivity(), OnImageCapturedListener {
 
     override fun onResume() {
         super.onResume()
-        if (!::hiddenCam.isInitialized && hasPermissions(SetupStep.CAMERA_STORAGE_PERMISSIONS)) {
-            onPermissionsGranted()
-        }
-
         val requiredMissing = SetupMonitor.check(this).any { it.required }
         findViewById<Button>(R.id.finishSetupBtn).visibility = if (requiredMissing) View.VISIBLE else View.GONE
 
@@ -231,48 +162,8 @@ class MainActivity : AppCompatActivity(), OnImageCapturedListener {
         }
     }
 
-    override fun onImageCaptured(image: File, packageName: String, metadata: JSONObject) {
-        val message = "Image captured, saved to:${image.absolutePath}"
-        Log.i(TAG, message)
-        log(message)
-        showToast(message)
-    }
-
-    override fun onImageCaptureError(e: Throwable?) {
-        e?.run {
-            val message = "Image captured failed:${e.message}"
-            showToast(message)
-            log(message)
-            printStackTrace()
-        }
-    }
-
-    private fun showToast(message: String) {
-        Toast.makeText(applicationContext, message, Toast.LENGTH_LONG).show()
-        Log.d(TAG, message)
-    }
-
     private fun log(message: String) {
         Log.d(TAG, message)
-    }
-
-    /**
-     * Creates `DCIM/HiddenCam` and initializes a [HiddenCam] instance. The instance is
-     * never started (captures are started by [CaptureTriggerReceiver]), but creating it
-     * binds CameraX to its lifecycle, so it is kept.
-     */
-    fun onPermissionsGranted() {
-        Log.d(TAG, "permission granted")
-
-        baseStorageFolder = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DCIM), CaptureTriggerReceiver.CAPTURE_FOLDER_NAME).apply {
-            if (!exists()) mkdir()
-        }
-        hiddenCam = HiddenCam(
-            applicationContext, baseStorageFolder, this,
-            CaptureTimeFrequency.Recurring(CaptureTriggerReceiver.RECURRING_INTERVAL_MS),
-            targetResolution = Size(CaptureTriggerReceiver.CAPTURE_WIDTH, CaptureTriggerReceiver.CAPTURE_HEIGHT)
-        )
-
     }
 
     companion object {

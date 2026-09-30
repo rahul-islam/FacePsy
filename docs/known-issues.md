@@ -43,33 +43,46 @@ These were found during the refactor and verified on a Pixel 10 (Android 17) on
 - **Old toolchain.** Upgraded to AGP 8.7.3, Gradle 8.9, Kotlin 1.9.25, JDK 17, compile
   SDK 35 (target SDK unchanged at 28). Removed `kotlin-android-extensions` (unused) and
   the broken Spotless setup (it pointed to a missing license file).
+- **Camera opened on every broadcast.** The old `CaptureTriggerReceiver.isCameraInUse()`
+  opened the back camera on every broadcast and never released it. It was removed with
+  the switch to video capture.
+- **AU model reloaded per face.** The old worker mapped `AU_200.tflite` and built a new
+  `Interpreter` for every detected face. `FaceFeatureExtractor` now loads ML Kit and the
+  AU model once per worker run and reuses them for every frame and face.
 
 ## Runtime bugs
 
 1. **Hidden crash button.** `MainActivity` wires the invisible `startBtn` to `crashMe()`,
    which throws a `NullPointerException`. It was used to test crash-restart.
-2. **Feature extraction never retries.** In `ImageProcessingWorker.doWork`, the
-   `Result.retry()`/`Result.failure()` value in the `catch` block is discarded, so the
-   worker always returns `Result.success()`.
-3. **Camera opened on every broadcast.** `CaptureTriggerReceiver.isCameraInUse()` calls
-   `Camera.open()` for every broadcast it receives and never releases the camera. The
-   result is only logged.
-4. **Crash restart uses the wrong PendingIntent type.**
+2. **Legacy photo worker never retries.** In `ImageProcessingWorker.doWork` (kept only to
+   drain photo jobs from before the video update), the `Result.retry()`/`Result.failure()`
+   value in the `catch` block is discarded, so the worker always returns
+   `Result.success()`. `VideoProcessingWorker` does retry.
+3. **Crash restart uses the wrong PendingIntent type.**
    `CrashRestartHandler.restartServiceAndExit` wraps a *Service* intent in
    `PendingIntent.getActivity()`, so the scheduled alarm doesn't restart the service.
    The restart that works is the direct `startForegroundService` call just before it.
-5. **Stroop crash before config loads.** `StroopActivity.onClick` reads
+4. **Stroop crash before config loads.** `StroopActivity.onClick` reads
    `SensingService.stroopConfig["rounds"]!!`, which throws if `config/stroopTask` hasn't
    been received yet.
-6. **Flower 4x4 blocks the UI thread and sends a null extra.** `Flower4x4Activity`
+5. **Flower 4x4 blocks the UI thread and sends a null extra.** `Flower4x4Activity`
    calls `SystemClock.sleep(2000)` on the UI thread before switching back to 3x3. It
    also passes `flowerData as Parcelable?` as an extra, and that value is always null.
-7. **Service exposure and battery.** `SensingService` is declared `exported="true"`, and
+6. **Service exposure and battery.** `SensingService` is declared `exported="true"`, and
    it holds a `PARTIAL_WAKE_LOCK` indefinitely while running.
-8. **Model reloaded per face.** `ImageProcessingWorker.computeActionUnits` maps
-   `AU_200.tflite` and creates a new `Interpreter` for every detected face.
-9. **Unguarded static state.** `CaptureTriggerReceiver.isCapturing` and the
+7. **Unguarded static state.** `CaptureTriggerReceiver.isCapturing` and the
    `SensingService` config maps are mutable statics without synchronization.
+8. **Video processing is expensive at full frame rate.** With
+   `VideoProcessingWorker.FRAME_STEP = 1`, a 59.9 s session (1,787 frames) took about
+   11.5 minutes to process on a Pixel 10, and Firestore writes and eye-crop uploads are
+   about 3x the old 10 fps photo pipeline. Set `FRAME_STEP = 3` for ~10 fps at roughly a
+   third of the cost. Video processing needs a network connection and can lag well behind
+   capture on a busy phone.
+9. **Raw audio is uploaded and can record bystanders.** Each session's audio track is
+   uploaded to Storage `audio/` and referenced from `audioRecordings`. It may contain the
+   voices of people who did not consent; cover this in the consent form and IRB protocol,
+   and make sure Storage/Firestore security rules allow (and protect) `audio/` and
+   `audioRecordings`.
 
 ## Data / configuration
 
@@ -91,8 +104,9 @@ These were found during the refactor and verified on a Pixel 10 (Android 17) on
 13. **Target SDK is still 28.** The toolchain was upgraded (see Fixed), but raising the
     target changes runtime behavior (foreground-service types, scoped storage,
     notification permission, background limits) and needs its own migration and testing.
-    Other old dependencies remain: CameraX `1.0.0-alpha06` (vendored HiddenCam),
-    `jcenter()`, two Firebase BoMs (25.4.1 and 25.12.0), coroutines 1.1.1.
+    Other old dependencies remain: `jcenter()`, two Firebase BoMs (25.4.1 and 25.12.0),
+    coroutines 1.1.1. (Capture now uses CameraX 1.4.2; the vendored HiddenCam library and
+    its CameraX `1.0.0-alpha06` were removed.)
 
 ## Removed in the refactor (no runtime effect)
 

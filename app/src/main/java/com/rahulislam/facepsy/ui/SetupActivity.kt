@@ -68,7 +68,7 @@ class SetupActivity : AppCompatActivity() {
 
             row.findViewById<TextView>(R.id.stepTitleTv).text = step.title
             row.findViewById<TextView>(R.id.stepReasonTv).text =
-                    if (blocked) step.reason + "\n\nYou chose \"Don't allow\" before, so Android won't ask again. Tap below, open Permissions and allow Camera and Photos/Storage."
+                    if (blocked) step.reason + "\n\nYou chose \"Don't allow\" before, so Android won't ask again. Tap below, open Permissions and allow ${step.title}."
                     else step.reason
 
             val status = row.findViewById<TextView>(R.id.stepStatusTv)
@@ -106,7 +106,7 @@ class SetupActivity : AppCompatActivity() {
     }
 
     private fun actionLabel(step: SetupStep) = when (step) {
-        SetupStep.CAMERA_STORAGE -> "Allow"
+        SetupStep.CAMERA, SetupStep.MICROPHONE -> "Allow"
         SetupStep.ACCESSIBILITY -> "Open Accessibility settings"
         SetupStep.NOTIFICATIONS -> "Open notification settings"
         SetupStep.BATTERY -> "Allow"
@@ -116,12 +116,12 @@ class SetupActivity : AppCompatActivity() {
     /** Starts the system flow that lets the participant turn [step] on. */
     private fun perform(step: SetupStep) {
         when (step) {
-            SetupStep.CAMERA_STORAGE ->
+            SetupStep.CAMERA, SetupStep.MICROPHONE ->
                 if (isPermanentlyDenied(step)) {
                     openAppDetails()
                 } else {
                     SetupMonitor.markAsked(this, step)
-                    requestPermissions(SetupStep.CAMERA_STORAGE_PERMISSIONS, REQUEST_CAMERA_STORAGE)
+                    requestPermissions(step.runtimePermissions(), REQUEST_RUNTIME_PERMISSION)
                 }
             SetupStep.ACCESSIBILITY ->
                 start(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
@@ -144,12 +144,13 @@ class SetupActivity : AppCompatActivity() {
     }
 
     /**
-     * True if the participant denied camera/storage and Android will no longer show the
-     * prompt ("Don't allow" twice, or "Don't ask again").
+     * True if the participant denied a runtime permission of [step] and Android will no
+     * longer show the prompt ("Don't allow" twice, or "Don't ask again").
      */
     private fun isPermanentlyDenied(step: SetupStep): Boolean {
-        if (step != SetupStep.CAMERA_STORAGE || !SetupMonitor.wasAsked(this, step)) return false
-        return SetupStep.CAMERA_STORAGE_PERMISSIONS.any {
+        val permissions = step.runtimePermissions()
+        if (permissions.isEmpty() || !SetupMonitor.wasAsked(this, step)) return false
+        return permissions.any {
             checkSelfPermission(it) != PackageManager.PERMISSION_GRANTED &&
                     !shouldShowRequestPermissionRationale(it)
         }
@@ -169,7 +170,7 @@ class SetupActivity : AppCompatActivity() {
     }
 
     companion object {
-        private const val REQUEST_CAMERA_STORAGE = 200
+        private const val REQUEST_RUNTIME_PERMISSION = 200
 
         /** `Intent.ACTION_AUTO_REVOKE_PERMISSIONS` (API 30); not in the compile SDK (28). */
         private const val ACTION_AUTO_REVOKE_PERMISSIONS = "android.intent.action.AUTO_REVOKE_PERMISSIONS"

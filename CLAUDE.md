@@ -28,16 +28,17 @@ No NDK, CMake or OpenCV is needed. There are no meaningful tests
 app/src/main/java/com/rahulislam/facepsy/
   MainActivity, FacePsyAccessibilityService   (root: FQCNs are pinned, see below)
   FacePsyApplication                          (creates SensingService.kronosClock at process start)
+  capture/     VideoCaptureSession             (records front-camera MP4 via CameraX)
   data/        FirebaseRefs, TriggerContract   (all Firebase paths + broadcast contract)
   service/     SensingService, ServiceAction, ServiceStateStore, CrashRestartHandler
   receiver/    CaptureTriggerReceiver, ScreenEventLogReceiver, BootReceiver
-  processing/  ImageProcessingWorker           (ML Kit + TFLite AU model + upload)
+  processing/  VideoProcessingWorker, FaceFeatureExtractor (ML Kit + LiteRT AU model + upload);
+               ImageProcessingWorker (legacy, drains photo jobs queued before the update)
   messaging/   FacePsyMessagingService         (FCM)
   tasks/       flower/ (3x3 + 4x4 memory game, FlowerGameCommon), stroop/
   setup/       SetupStep, SetupMonitor          (permission checklist + re-checks)
   ui/          SetupActivity, InstructionActivity
   util/        ContextExt, Log
-library/       vendored HiddenCam (Apache-2.0, see NOTICE); don't restyle, keep diffable
 scripts/       configure_firebase.py (seeds Firestore `config`)
 ```
 
@@ -46,8 +47,10 @@ scripts/       configure_firebase.py (seeds Firestore `config`)
 - **Pinned class names.** Don't rename or move these:
   - `com.rahulislam.facepsy.FacePsyAccessibilityService`: participants enable it by
     component name in Settings.
-  - `com.rahulislam.facepsy.processing.ImageProcessingWorker`: WorkManager persists the
-    class name.
+  - `com.rahulislam.facepsy.processing.VideoProcessingWorker` and
+    `com.rahulislam.facepsy.processing.ImageProcessingWorker`: WorkManager persists the
+    class name for queued work. (ImageProcessingWorker is kept only to drain photo jobs
+    queued by an older version.)
   - `com.rahulislam.facepsy.MainActivity`: the launcher and pinned shortcuts point to it.
 - **Firebase names.** Firestore collections and config docs, RTDB paths, the Storage path
   and every document field name (including the mixed `snake_case`/`camelCase` ones) are a
@@ -56,8 +59,9 @@ scripts/       configure_firebase.py (seeds Firestore `config`)
 - **Keys and strings:**
   - broadcast action `com.rahulislam.facepsy.triggers` and its extras `packageName`,
     `duration`, `gameId`;
-  - WorkManager keys `IMAGE_URI`, `TIMESTAMP`, `SEQ_ID`, `GAME_ID`, `TRIGGER_NAME` and
-    tag `feature-extraction`;
+  - WorkManager keys `VIDEO_PATH`, `STARTED_AT`, `SEQ_ID`, `GAME_ID`, `TRIGGER_NAME` and
+    tag `video-feature-extraction` (and the legacy photo keys `IMAGE_URI`, `TIMESTAMP`,
+    `SEQ_ID`, `GAME_ID`, `TRIGGER_NAME`, tag `feature-extraction`);
   - SharedPreferences `SPYSERVICE_KEY` / `SPYSERVICE_STATE`;
   - notification channel `ENDLESS SERVICE CHANNEL`;
   - wake-lock tag `EndlessService::lock`.

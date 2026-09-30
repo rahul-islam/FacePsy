@@ -26,11 +26,17 @@ enum class SetupStep(
         val required: Boolean,
         val logKey: String
 ) {
-    CAMERA_STORAGE(
-            "Camera and storage",
-            "FacePsy briefly records your face with the front camera when a trigger fires, stores the frames on the phone until they are analysed, then deletes them.",
+    CAMERA(
+            "Camera",
+            "When a trigger fires, FacePsy records a short video of your face with the front camera. The video is analysed on your phone and then deleted; only facial measurements and eye-region images are uploaded.",
             required = true,
             logKey = "CAMERA"
+    ),
+    MICROPHONE(
+            "Microphone",
+            "FacePsy records audio together with each video. The audio, which can include other people's voices nearby, is uploaded to the study server for analysis.",
+            required = true,
+            logKey = "MICROPHONE"
     ),
     ACCESSIBILITY(
             "Accessibility service",
@@ -69,7 +75,7 @@ enum class SetupStep(
     }
 
     fun isDone(context: Context): Boolean = when (this) {
-        CAMERA_STORAGE -> context.hasPermissions(CAMERA_STORAGE_PERMISSIONS)
+        CAMERA, MICROPHONE -> context.hasPermissions(runtimePermissions())
         ACCESSIBILITY -> isAccessibilityEnabled(context)
         NOTIFICATIONS -> NotificationManagerCompat.from(context).areNotificationsEnabled()
         BATTERY -> Build.VERSION.SDK_INT < Build.VERSION_CODES.M ||
@@ -78,8 +84,14 @@ enum class SetupStep(
         KEEP_PERMISSIONS -> autoRevokeExempted(context) ?: true
     }
 
+    /** Runtime permissions this step requests (empty for settings-based steps). */
+    fun runtimePermissions(): Array<String> = when (this) {
+        CAMERA -> arrayOf(Manifest.permission.CAMERA)
+        MICROPHONE -> arrayOf(Manifest.permission.RECORD_AUDIO)
+        else -> emptyArray()
+    }
+
     companion object {
-        val CAMERA_STORAGE_PERMISSIONS = arrayOf(Manifest.permission.CAMERA, Manifest.permission.WRITE_EXTERNAL_STORAGE)
 
         /** Android 11 (API 30); not in the compile SDK (28). */
         const val API_R = 30

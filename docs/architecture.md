@@ -1,8 +1,7 @@
 # Architecture
 
-FacePsy is a single Android app (`:app`) plus a vendored camera library (`:library`,
-a copy of [CottaCush/HiddenCam](https://github.com/CottaCush/HiddenCam)). Every
-record goes to Firebase. See [data-schema.md](data-schema.md) for the stored fields.
+FacePsy is a single Android app (`:app`). Every record goes to Firebase. See
+[data-schema.md](data-schema.md) for the stored fields.
 
 ## Data flow
 
@@ -18,13 +17,14 @@ flowchart LR
     A -- "com.rahulislam.facepsy.triggers" --> R
     T -- "com.rahulislam.facepsy.triggers" --> R
 
-    R[CaptureTriggerReceiver] -->|"HiddenCam: front camera,<br/>1 frame / 100 ms for N ms"| F[(DCIM/HiddenCam/*.jpg)]
-    R -->|"one job per frame"| W[ImageProcessingWorker<br/>WorkManager]
-    F --> W
-    W -->|"ML Kit face detection"| W
-    W -->|"AU_200.tflite<br/>12 action units"| W
+    R[CaptureTriggerReceiver] -->|"VideoCaptureSession: front camera,<br/>MP4 (1080p ~30 fps + audio) for N ms"| V[(filesDir/captures/*.mp4)]
+    R -->|"one job per session"| W[VideoProcessingWorker<br/>WorkManager]
+    V --> W
+    W -->|"audio track (.m4a)"| SA[(Cloud Storage<br/>audio/)]
+    W -->|"one doc per session"| AR[(Firestore<br/>audioRecordings)]
+    W -->|"per frame: FaceFeatureExtractor<br/>ML Kit + AU_200.tflite"| W
     W -->|"eye crops"| S[(Cloud Storage<br/>eyeRegion/)]
-    W -->|"one doc per face"| FS[(Firestore<br/>features)]
+    W -->|"one doc per face per frame"| FS[(Firestore<br/>features)]
 
     A -->|"foreground app"| PU[(Firestore<br/>phoneUsageData)]
     SE[ScreenEventLogReceiver<br/>screen on/off/unlock] --> PU
@@ -37,17 +37,35 @@ flowchart LR
    - a cognitive task starts, for `.flowerGame` / `.stroopTask` ms.
 
    Only one session runs at a time (`CaptureTriggerReceiver.isCapturing`).
-2. **Capture.** `HiddenCam` (CameraX, no preview) writes a 1080x1920 front-camera
-   frame every 100 ms to `DCIM/HiddenCam`. For each frame,
-   `CaptureTriggerReceiver.onImageCaptured` enqueues an `ImageProcessingWorker` with the
-   file path, a Kronos timestamp, the session `seq_id`, `gameId` and the trigger name.
-3. **Extract.** `ImageProcessingWorker` runs ML Kit face detection (landmarks, contours,
-   classification, head pose). For each face it then:
-   - builds a 200x200 grayscale face crop and runs `assets/AU_200.tflite` to estimate
+2. **Record.** `capture/VideoCaptureSession` (CameraX 1.4 `VideoCapture`, no preview,
+   its own `LifecycleOwner`) records the front camera at 1080p (falling back as low as
+   SD), about 30 fps, into app-private storage:
+   `filesDir/captures/{yyyy-MM-dd-HH-mm-ss-SSS}{triggerName}.mp4`. Audio is included when
+   the microphone permission is granted. No DCIM folder or storage permission is used.
+   When the file is finalized, `CaptureTriggerReceiver` enqueues one
+   `VideoProcessingWorker` (requires network; exponential backoff from 30 s; up to 5
+   attempts).
+3. **Audio.** The worker copies the audio track into an `.m4a` without re-encoding,
+   uploads it to Storage `audio/{uid}/{session}.m4a` and writes
+   `audioRecordings/{uid}_{session}`.
+4. **Frames.** The worker decodes every `FRAME_STEP`-th frame (`1` = every frame) in
+   chunks of 5 and runs `processing/FaceFeatureExtractor` on each. For every face it:
+   - runs `assets/AU_200.tflite` (LiteRT) on a 200x200 grayscale face crop to estimate
      12 FACS action units;
-   - crops both eyes from the color frame.
-4. **Upload.** The eye crops go to Cloud Storage, and one `features` document per face
-   goes to Firestore. The local frame is then deleted.
+   - uploads left/right eye crops to Storage `eyeRegion/`;
+   - writes one `features` document (batched writes, deterministic ids).
+5. **Clean up.** The video is deleted. Progress is saved after each chunk (`.progress`)
+   and after the audio upload (`.audio-done`), so a stopped or retried worker resumes
+   without duplicating uploads or documents.
+
+`FaceFeatureExtractor` is also used by `ImageProcessingWorker`, which is kept only to
+process photo jobs that were still queued when a participant updated from the older
+photo-based version. The extractor loads ML Kit and the AU model once per worker run.
+
+**Cost.** With `FRAME_STEP = 1`, a 59.9 s session (1,787 frames) took about 11.5 minutes
+to process on a Pixel 10, and Firestore writes and eye-crop uploads are about 3x the old
+10 fps photo pipeline. `FRAME_STEP = 3` analyses ~10 fps (the old rate) at roughly a
+third of the cost. See [known-issues.md](known-issues.md).
 
 ## Service lifecycle
 
@@ -57,8 +75,8 @@ sequenceDiagram
     participant S as SensingService
     participant B as BootReceiver
     participant C as CrashRestartHandler
-    M->>M: request camera/storage permissions
     M->>M: FirebaseUI sign-in (if needed)
+    M->>M: setup checklist (SetupActivity)
     M->>S: startForegroundService(START)
     S->>S: foreground notification, wake lock
     S->>S: listen to config/* (triggers, triggerDuration, stroopTask, survey)
@@ -91,8 +109,10 @@ sequenceDiagram
 
 `ui/SetupActivity` is a single checklist (built from `setup/SetupStep`) that explains
 each permission, shows whether it is on, and opens the right system screen for it.
-Camera/storage and accessibility are required; notifications, unrestricted battery use
-and "keep permissions if unused" (Android 11+) are recommended.
+Camera, microphone and accessibility are required; notifications, unrestricted battery
+use and "keep permissions if unused" (Android 11+, shown only when it applies) are
+recommended. The microphone step tells participants that audio, including nearby
+voices, is uploaded.
 
 - `MainActivity` opens it after sign-in until onboarding is completed, then again on any
   visit while a required step is missing, and at most once a day for missing
@@ -109,8 +129,10 @@ and "keep permissions if unused" (Android 11+) are recommended.
 ```
 com.rahulislam.facepsy
 ├── FacePsyApplication             creates the shared NTP clock at process start
-├── MainActivity                  launcher: permissions, sign-in, starts service, home buttons
+├── MainActivity                  launcher: sign-in, starts service, opens setup, home buttons
 ├── FacePsyAccessibilityService   foreground-app logging + app-open capture trigger
+├── capture/
+│   └── VideoCaptureSession       records one front-camera MP4 (video + audio) with CameraX
 ├── data/
 │   ├── FirebaseRefs              Firestore/RTDB/Storage names (data contract)
 │   └── TriggerContract           capture-trigger broadcast action, extras, duration keys
@@ -120,14 +142,16 @@ com.rahulislam.facepsy
 │   ├── ServiceStateStore         persisted STARTED / STOPPED state
 │   └── CrashRestartHandler       uncaught-exception handler that restarts the service
 ├── receiver/
-│   ├── CaptureTriggerReceiver    runs a HiddenCam capture session, queues extraction
+│   ├── CaptureTriggerReceiver    starts a video session, queues processing
 │   ├── ScreenEventLogReceiver    logs screen on/off/unlock
 │   └── BootReceiver              restarts the service after boot
 ├── setup/
-│   ├── SetupStep                 checklist items: camera/storage, accessibility, notifications, ...
+│   ├── SetupStep                 checklist items: camera, microphone, accessibility, ...
 │   └── SetupMonitor              re-checks setup, logs changes, reminder notification
 ├── processing/
-│   └── ImageProcessingWorker     ML Kit + TFLite feature extraction and upload
+│   ├── VideoProcessingWorker     audio upload + per-frame feature extraction of a session
+│   ├── FaceFeatureExtractor      ML Kit + AU model + eye crops for one image/frame
+│   └── ImageProcessingWorker     legacy: drains photo jobs queued before the update
 ├── messaging/
 │   └── FacePsyMessagingService   FCM notifications
 ├── tasks/

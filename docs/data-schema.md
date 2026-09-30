@@ -23,17 +23,21 @@ one document.
 | `stroopTask` | `rounds` | number | Stroop responses per session. |
 | `survey` | `preLink`, `postLink` | string (URL) | Opened from the home screen with `?userId={uid}` appended. |
 
-### `features` (one document per detected face per captured frame)
+### `features` (one document per detected face per analysed frame)
 
-Written by `processing/ImageProcessingWorker`. The per-face JSON is converted to a map
-with Gson, so JSON numbers are stored as doubles.
+Written by `processing/VideoProcessingWorker` (one document per face per analysed video
+frame) and, for photo jobs queued before the video update, by
+`processing/ImageProcessingWorker`. Both share `processing/FaceFeatureExtractor`. The
+per-face JSON is converted to a map with Gson, so JSON numbers are stored as doubles.
+Document ids are deterministic (`{uid}_{session}_f{frameIndex:05}_{faceIndex}` for video),
+so a retried worker overwrites instead of duplicating.
 
 | Field | Type | Description |
 |---|---|---|
 | `user_id` | string | Firebase Auth uid; left out if not signed in. |
-| `timestamp` | string | Kronos time (ms) when the frame was queued. |
+| `timestamp` | string | Kronos time (ms). For video: session start + the frame's offset. |
 | `gameId` | string | Session id: a Flower/Stroop game UUID, `appUsage`, or `phoneUnlock`. |
-| `fileName` | string | Absolute path of the frame on the device, `DCIM/HiddenCam/{yyyy-MM-dd-HH-mm-ss-SSS}{triggerName}.jpg`. The file is deleted after processing. |
+| `fileName` | string | `"{video file name}#{frameIndex}"` for video frames (photos: the frame's file path). |
 | `boundingBox` | string | `Rect.flattenToString()`: `"left top right bottom"` in pixels. |
 | `landmarks` | array of `{type: int, x: float, y: float}` | ML Kit face landmarks. |
 | `contours` | array of `{x: float, y: float}` | Every point of every ML Kit face contour, flattened in ML Kit's contour order. |
@@ -41,10 +45,29 @@ with Gson, so JSON numbers are stored as doubles.
 | `classification` | `{leftEyeOpenProbability, rightEyeOpenProbability, smilingProbability}` float or null | ML Kit classification. |
 | `au` | `{AU01, AU02, AU04, AU06, AU07, AU10, AU12, AU14, AU15, AU17, AU23, AU24}` float | Action-unit intensities from `assets/AU_200.tflite`. Empty if the face box falls outside the image or the model failed to load. |
 | `metadata.timestamp` | string | Same as `timestamp`. |
-| `metadata.seq_id` | string | Kronos time (ms) when the capture session started; groups frames of one session. |
+| `metadata.seq_id` | string | Kronos time (ms) when the capture session started; groups frames of one session. (Photos only; video uses `metadata.video`.) |
 | `metadata.gameId` | string | Same as `gameId`. |
 | `metadata.triggerName` | string | Package name of the triggering app, or `phoneUnlock` / `flowerGame` / `stroopTask`. |
 | `metadata.appVersion` | string | App `versionName`. |
+| `metadata.source` | string | `"video"` for frames from a video session (absent for photos). |
+| `metadata.video` | string | Session name (the video file name without extension). Video only. |
+| `metadata.frameIndex` | number | 0-based index of the frame within the video. Video only. |
+| `metadata.frameTimeMs` | number | Frame time relative to the start of the video, in ms. Video only. |
+
+### `audioRecordings` (one document per uploaded capture-session audio file)
+
+Written by `processing/VideoProcessingWorker`, document id `{uid}_{session}`.
+
+| Field | Type | Description |
+|---|---|---|
+| `user_id` | string or null | Firebase Auth uid. |
+| `storagePath` | string | Cloud Storage path of the audio (`audio/{uid}/{session}.m4a`). |
+| `timestamp` | number | Kronos time (ms) when the capture session started. |
+| `durationMs` | number or null | Audio duration in ms (from the extracted `.m4a`). |
+| `seq_id` | string | Kronos time (ms) at session start (same as `timestamp`). |
+| `gameId` | string | Session id: a Flower/Stroop game UUID, `appUsage`, or `phoneUnlock`. |
+| `triggerName` | string | Package name of the triggering app, or `phoneUnlock` / `flowerGame` / `stroopTask`. |
+| `appVersion` | string | App `versionName`. |
 
 ### `phoneUsageData`
 
@@ -54,8 +77,8 @@ with Gson, so JSON numbers are stored as doubles.
 | `action` | string | One of: an intent action (`android.intent.action.SCREEN_ON`, `SCREEN_OFF`, `USER_PRESENT`), written by `receiver/ScreenEventLogReceiver`; the package name of the app that came to the foreground, written by `FacePsyAccessibilityService`; or a setup change `SETUP_<step>_OK` / `SETUP_<step>_MISSING`, written by `setup/SetupMonitor` (see below). |
 | `timestamp` | number | Kronos time (ms). |
 
-Setup changes: `<step>` is `CAMERA`, `ACCESSIBILITY`, `NOTIFICATIONS`, `BATTERY` or
-`KEEP_PERMISSIONS`. One document is written for each step when a process first checks
+Setup changes: `<step>` is `CAMERA`, `MICROPHONE`, `ACCESSIBILITY`, `NOTIFICATIONS`,
+`BATTERY` or `KEEP_PERMISSIONS`. One document is written for each step when a process first checks
 it (after every app start) and whenever it changes, so a `SETUP_ACCESSIBILITY_MISSING`
 followed later by `SETUP_ACCESSIBILITY_OK` brackets a gap in app-usage data.
 
@@ -110,14 +133,16 @@ Realtime Database (re)connection.
 
 | Path | Content | Writer |
 |---|---|---|
-| `eyeRegion/{uid}/{imageBaseName}_LEFT.png`, `..._RIGHT.png` | Full-color crop of each eye (contour box + 20 px margin), one per face per frame. `imageBaseName` is the frame file name without its extension. If no user is signed in, `uid` is the string `null`. | `processing/ImageProcessingWorker` |
+| `eyeRegion/{uid}/{imageBaseName}_LEFT.png`, `..._RIGHT.png` | Full-color crop of each eye (contour box + 20 px margin), one per face per frame. For video, `imageBaseName` is `{session}_f{frameIndex:05}`; for photos it is the frame file name without its extension. If no user is signed in, `uid` is the string `null`. | `processing/FaceFeatureExtractor` |
+| `audio/{uid}/{session}.m4a` | Audio track of one capture session (AAC in MP4), copied from the recording without re-encoding. | `processing/VideoProcessingWorker` |
 
 ## Local contracts (on the device)
 
 | Name | Value | Where |
 |---|---|---|
 | Broadcast action | `com.rahulislam.facepsy.triggers`, with String extras `packageName`, `duration` (ms), `gameId` | `data/TriggerContract`, manifest |
-| WorkManager input keys | `IMAGE_URI`, `TIMESTAMP`, `SEQ_ID`, `GAME_ID`, `TRIGGER_NAME`; tag `feature-extraction` | `ImageProcessingWorker` companion |
+| WorkManager input keys (video) | `VIDEO_PATH`, `STARTED_AT`, `SEQ_ID`, `GAME_ID`, `TRIGGER_NAME`; tag `video-feature-extraction` | `VideoProcessingWorker` companion |
+| WorkManager input keys (legacy photos) | `IMAGE_URI`, `TIMESTAMP`, `SEQ_ID`, `GAME_ID`, `TRIGGER_NAME`; tag `feature-extraction` | `ImageProcessingWorker` companion |
 | SharedPreferences | file `SPYSERVICE_KEY`, key `SPYSERVICE_STATE` = `STARTED` or `STOPPED` | `service/ServiceStateStore.kt` |
-| Frame folder | `DCIM/HiddenCam` | `CaptureTriggerReceiver.CAPTURE_FOLDER_NAME` |
+| Capture folder | `filesDir/captures` (app-private) | `CaptureTriggerReceiver.CAPTURE_DIR` |
 | Notification channel | `ENDLESS SERVICE CHANNEL` (ids 1 = foreground, 42 = enable accessibility) | `service/SensingService` |

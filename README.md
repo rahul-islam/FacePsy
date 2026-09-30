@@ -24,16 +24,17 @@ FacePsy is designed to capture real-time facial behavior primitives as users int
 * Reboot app on device restart, app crash, etc, and continue data collection
 
 ## Architecture
-When a **trigger** fires, the app records the front camera in the background for a configured duration. Triggers are:
+When a **trigger** fires, the app records a short **video (with audio)** from the front camera in the background for a configured duration. Triggers are:
 - phone unlock;
 - opening an app from the study's app list (detected by an accessibility service);
 - starting a cognitive task.
 
-Each frame then goes through the following steps:
-1. It is queued to a WorkManager job.
-2. The job runs **ML Kit** face detection (landmarks, contours, head pose, eye/smile probabilities) and a **LiteRT** (TensorFlow Lite) model (`AU_200.tflite`) that estimates 12 facial action units.
-3. It uploads one Firestore document per face, plus eye-region crops to Cloud Storage.
-4. It deletes the frame.
+Each recording is then queued to a WorkManager job that:
+1. uploads the audio track to Cloud Storage and writes an `audioRecordings` document;
+2. decodes the video frame by frame and, for each frame, runs **ML Kit** face detection (landmarks, contours, head pose, eye/smile probabilities) and a **LiteRT** (TensorFlow Lite) model (`AU_200.tflite`) that estimates 12 facial action units, writing one Firestore `features` document per face and uploading eye-region crops to Cloud Storage;
+3. deletes the video.
+
+Recording uses CameraX `VideoCapture` (1080p, ~30 fps) into app-private storage — no gallery folder and no storage permission. By default every frame is analysed (`VideoProcessingWorker.FRAME_STEP = 1`); set `FRAME_STEP = 3` for ~10 fps (the old photo rate) at about a third of the processing and upload cost.
 
 A foreground service keeps collection running. It mirrors the study config from Firestore, reports presence, and is restarted after reboots and crashes.
 
@@ -45,17 +46,17 @@ app/src/main/java/com/rahulislam/facepsy/
 ├── FacePsyApplication.kt           # creates the shared NTP clock at process start
 ├── MainActivity.kt                 # launcher: permissions, sign-in, home screen
 ├── FacePsyAccessibilityService.kt  # foreground-app logging + app-open trigger
+├── capture/     # VideoCaptureSession: records the front-camera MP4 (CameraX)
 ├── data/        # Firebase paths (FirebaseRefs) and trigger broadcast contract
 ├── service/     # SensingService (foreground service), state store, crash restart
 ├── receiver/    # capture trigger, screen-event logging, boot
-├── processing/  # ImageProcessingWorker: ML Kit + TFLite feature extraction
+├── processing/  # VideoProcessingWorker + FaceFeatureExtractor (ML Kit + LiteRT); ImageProcessingWorker (legacy photos)
 ├── messaging/   # FCM notifications
 ├── tasks/       # Flower (visual-spatial memory) and Stroop cognitive tasks
 ├── setup/       # setup checklist steps and monitoring (SetupStep, SetupMonitor)
 ├── ui/          # setup checklist and instructions screens
 └── util/
 app/src/main/assets/AU_200.tflite   # action-unit model
-library/                            # HiddenCam background camera library (Apache-2.0)
 scripts/                            # Firestore config seeding script
 docs/                               # architecture, data schema, known issues
 c4model/                            # C4 / Structurizr model of the whole study system
@@ -143,7 +144,8 @@ python configure_firebase.py --cred ./cred/<service-account-key>.json --config c
 
 ### Participant permissions
 After sign-in, FacePsy opens a **Set up FacePsy** checklist. It explains each item, shows whether it is on, and opens the right system screen:
-- **Camera and storage** (required): frames are written to `DCIM/HiddenCam` briefly before they are processed and deleted. If the participant chose "Don't allow" twice, the button opens App info instead.
+- **Camera** (required): records the video, which is analysed on the phone and then deleted (only facial measurements and eye-region crops are uploaded). If the participant chose "Don't allow" twice, the button opens App info instead.
+- **Microphone** (required): audio is recorded with each video and **uploaded** to the study server. This can include the voices of other people nearby — cover it in your consent form and IRB protocol.
 - **Accessibility service** (required): needed for app-open triggers and foreground-app logging. On Android 13+, if FacePsy was installed from a downloaded APK, the switch is greyed out until the participant opens *App info → ⋮ → Allow restricted settings*.
 - **Notifications**, **unrestricted battery use** and **keep permissions if unused** (recommended).
 
@@ -151,12 +153,13 @@ Afterwards, FacePsy checks every minute and on each unlock. If something require
 
 ## Data collected
 Records go to Firestore collections:
-- `features`: facial features per detected face;
-- `phoneUsageData`: screen events and foreground apps;
+- `features`: facial features per detected face per analysed frame;
+- `audioRecordings`: one document per uploaded session audio file;
+- `phoneUsageData`: screen events, foreground apps, and permission/setup changes;
 - `flowerGameData` and `stroopData`: cognitive-task responses;
 - `users`: presence.
 
-Eye-region crops go to Storage under `eyeRegion/`. Status flags go to Realtime Database. The field-by-field schema is in [docs/data-schema.md](docs/data-schema.md).
+Eye-region crops go to Storage under `eyeRegion/` and session audio under `audio/`. Status flags go to Realtime Database. Make sure your Storage and Firestore security rules allow the `audio/` path and the `audioRecordings` collection. The field-by-field schema is in [docs/data-schema.md](docs/data-schema.md).
 
 ## Study Admin/Researcher/Developer
 The study admin, researcher or developer can access the collected data by logging into the [Firebase console](https://console.firebase.google.com/).
@@ -178,7 +181,7 @@ Read [CLAUDE.md](CLAUDE.md) before changing code. It lists the build setup and t
 Known bugs and technical debt are tracked in [docs/known-issues.md](docs/known-issues.md). Please keep behavior changes and refactors in separate commits.
 
 ## Credit
-Thanks to [CottaCush/HiddenCam](https://github.com/CottaCush/HiddenCam), which is vendored in `library/` under the Apache License 2.0 (see [NOTICE](NOTICE)).
+Earlier, photo-based versions of FacePsy vendored [CottaCush/HiddenCam](https://github.com/CottaCush/HiddenCam) (Apache License 2.0) for background capture. It has been replaced by CameraX video recording and is no longer bundled.
 
 ## Citation
 If you find this repository useful, please consider giving a star :star: and citation using the given BibTeX entry:
