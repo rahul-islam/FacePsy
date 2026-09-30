@@ -19,7 +19,7 @@
         android:visibility="invisible"/>
 
     <TextView
-        android:id="@+id/avaForProcessTv"
+        android:id="@+id/imageCountTv"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:layout_marginBottom="56dp"
@@ -83,7 +83,7 @@
         android:layout_marginBottom="76dp"
         android:text="Click start button to start processing"
         android:visibility="invisible"
-        app:layout_constraintBottom_toTopOf="@+id/avaForProcessTv"
+        app:layout_constraintBottom_toTopOf="@+id/imageCountTv"
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintHorizontal_bias="0.497"
         app:layout_constraintStart_toStartOf="parent" />

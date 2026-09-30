@@ -4,10 +4,10 @@
     xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    tools:context=".stroop.StroopActivity">
+    tools:context=".tasks.stroop.StroopActivity">
 
     <TextView
-        android:id="@+id/textView5"
+        android:id="@+id/stroopInstructionTv"
         android:layout_width="306dp"
         android:layout_height="43dp"
         android:text="Select the first letter of the name of the COLOR that is shown."
@@ -15,10 +15,10 @@
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintHorizontal_bias="0.306"
         app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintTop_toBottomOf="@+id/textView4" />
+        app:layout_constraintTop_toBottomOf="@+id/stroopTitleTv" />
 
     <TextView
-        android:id="@+id/textView4"
+        android:id="@+id/stroopTitleTv"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:layout_marginTop="32dp"
@@ -38,7 +38,7 @@
         android:textStyle="bold"
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintTop_toBottomOf="@+id/textView5" />
+        app:layout_constraintTop_toBottomOf="@+id/stroopInstructionTv" />
 
     <Button
         android:id="@+id/redBtn"

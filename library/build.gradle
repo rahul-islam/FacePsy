@@ -2,7 +2,8 @@ apply plugin: 'com.android.library'
 apply plugin: 'kotlin-android'
 apply from: '../dependencies.gradle'
 
-apply from: '../bintrayconfig.gradle'
+// Kotlin module name kept from the upstream HiddenCam publishing config (formerly bintrayconfig.gradle).
+ext.modulePackageId = 'com.cottacush.HiddenCamera'
 
 android {
     compileSdkVersion versions.compileSdk

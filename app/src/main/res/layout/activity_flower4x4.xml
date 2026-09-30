@@ -4,7 +4,7 @@
     xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    tools:context=".flower.Flower4x4Activity">
+    tools:context=".tasks.flower.Flower4x4Activity">
 
     <ImageButton
         android:id="@+id/button_12"
@@ -110,7 +110,7 @@
         app:layout_constraintEnd_toStartOf="@+id/button_1"
         app:layout_constraintHorizontal_bias="0.5"
         app:layout_constraintStart_toStartOf="@id/guideline1"
-        app:layout_constraintTop_toBottomOf="@+id/textView"
+        app:layout_constraintTop_toBottomOf="@+id/flowerStatusTv"
         app:layout_constraintVertical_bias="0"
         app:srcCompat="@drawable/flower_blank" />
 
@@ -295,7 +295,7 @@
         app:srcCompat="@drawable/flower_blank" />
 
     <TextView
-        android:id="@+id/textView"
+        android:id="@+id/flowerStatusTv"
         android:layout_width="376dp"
         android:layout_height="133dp"
         android:layout_marginStart="16dp"

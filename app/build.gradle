@@ -14,28 +14,9 @@ android {
         versionName versions.publishVersion
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
 
+        // Limits which ABIs of bundled native deps (TFLite, ML Kit) are packaged.
         ndk {
             abiFilters 'armeabi-v7a', 'arm64-v8a', 'x86', 'x86_64'
-        }
-
-        externalNativeBuild {
-            cmake {
-                cFlags "-O3"
-                cppFlags "-std=c++11 -frtti -fexceptions"
-                arguments "-DANDROID_PLATFORM=android-21",
-                        "-DANDROID_TOOLCHAIN=clang",
-                        "-DANDROID_STL=c++_shared",
-                        "-DANDROID_CPP_FEATURES=rtti exceptions"
-            }
-        }
-
-        sourceSets {
-            main {
-                jniLibs.srcDirs = [
-                        "src/main/cppLibs/dlib/lib",
-                        "src/main/cppLibs/opencv"
-                ]
-            }
         }
     }
 
@@ -43,12 +24,6 @@ android {
         release {
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
-        }
-    }
-
-    externalNativeBuild {
-        cmake {
-            path "CMakeLists.txt"
         }
     }
 
@@ -90,7 +65,8 @@ dependencies {
     // Kotlin + coroutines
     implementation "androidx.work:work-runtime-ktx:$work_version"
 
-    // Import the platform
+    // Firebase BoM. NOTE: a second, newer BoM is declared further below; Gradle resolves
+    // to the highest version. Kept as-is to avoid changing the resolved dependency set.
     implementation platform('com.google.firebase:firebase-bom:25.4.1')
     implementation 'com.google.firebase:firebase-analytics'
     implementation 'com.google.firebase:firebase-auth'
@@ -102,8 +78,6 @@ dependencies {
     // Add the dependencies for the Firebase Cloud Messaging and Analytics libraries
     implementation 'com.google.firebase:firebase-messaging-ktx:20.3.0'
     implementation 'com.google.firebase:firebase-analytics-ktx:17.5.0'
-
-    implementation 'androidx.work:work-runtime-ktx:' + versions.workManager
 
     implementation "com.lyft.kronos:kronos-android:0.0.1-alpha09"
 
@@ -117,7 +91,6 @@ dependencies {
     implementation 'androidx.core:core-ktx:' + versions.ktx
     implementation 'androidx.appcompat:appcompat:' + versions.androidx
     implementation 'org.apache.commons:commons-compress:1.16'
-    implementation 'androidx.appcompat:appcompat:1.1.0'
     implementation 'androidx.constraintlayout:constraintlayout:1.1.3'
     testImplementation 'junit:junit:4.12'
     androidTestImplementation 'androidx.test.ext:junit:1.1.1'
@@ -137,12 +110,6 @@ dependencies {
     implementation 'org.tensorflow:tensorflow-lite:2.3.0'
     implementation 'org.tensorflow:tensorflow-lite-support:0.4.4'
 
-}
-
-kotlin {
-    experimental {
-        coroutines "enable"
-    }
 }
 
 configurations {

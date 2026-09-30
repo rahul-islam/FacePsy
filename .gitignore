@@ -133,3 +133,18 @@ fabric.properties
 !/gradle/wrapper/gradle-wrapper.jar
 
 # End of https://www.gitignore.io/api/androidstudio
+### FacePsy ###
+# Native / CMake build output
+.cxx/
+
+# Signing keys
+*.jks
+*.keystore
+
+# Machine-specific IDE settings
+.idea/gradle.xml
+
+# Python (scripts/)
+__pycache__/
+venv/
+.venv/

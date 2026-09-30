@@ -37,25 +37,27 @@
         android:supportsRtl="true"
         android:theme="@style/AppTheme">
         <activity
-            android:name=".InstructionActivity"
+            android:name=".ui.InstructionActivity"
             android:exported="true" />
         <activity
-            android:name=".stroop.StroopDescriptionActivity"
+            android:name=".tasks.stroop.StroopDescriptionActivity"
             android:exported="true" />
         <activity
-            android:name=".stroop.StroopActivity"
+            android:name=".tasks.stroop.StroopActivity"
             android:exported="true" />
         <activity
-            android:name=".flower.Flower4x4Activity"
+            android:name=".tasks.flower.Flower4x4Activity"
             android:exported="true" />
         <activity
-            android:name=".flower.Flower3x3Activity"
+            android:name=".tasks.flower.Flower3x3Activity"
             android:exported="true" />
 
         <service
-            android:name=".processing.EndlessService"
+            android:name=".service.SensingService"
             android:enabled="true"
             android:exported="true" />
+        <!-- Enabled by the participant in system Accessibility settings, which store it by
+             component name: do not rename or move this class. -->
         <service
             android:name=".FacePsyAccessibilityService"
             android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
@@ -64,7 +66,7 @@
             </intent-filter>
         </service>
         <service
-            android:name=".FirebaseMessagingService"
+            android:name=".messaging.FacePsyMessagingService"
             android:exported="false">
             <intent-filter>
                 <action android:name="com.google.firebase.MESSAGING_EVENT" />
@@ -72,13 +74,14 @@
         </service>
 
         <receiver
-            android:name=".processing.UserActionReceiver"
+            android:name=".receiver.ScreenEventLogReceiver"
             android:enabled="true"
             android:exported="true">
             <intent-filter android:priority="90000">
                 <action android:name="android.intent.action.USER_PRESENT" />
             </intent-filter>
-        </receiver> <!-- <activity android:name=".MainActivity"></activity> -->
+        </receiver>
+        <!-- Launcher entry point: do not rename or move this class. -->
         <activity android:name=".MainActivity">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
@@ -88,14 +91,14 @@
         </activity>
 
         <receiver
-            android:name=".processing.StartReceiver"
+            android:name=".receiver.BootReceiver"
             android:enabled="true">
             <intent-filter>
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
             </intent-filter>
         </receiver>
         <receiver
-            android:name=".processing.ScreenActionReceiver"
+            android:name=".receiver.CaptureTriggerReceiver"
             android:exported="true">
             <intent-filter android:priority="90000">
                 <action android:name="android.intent.action.USER_PRESENT" />
