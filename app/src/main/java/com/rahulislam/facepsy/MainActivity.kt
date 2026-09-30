@@ -1,24 +1,20 @@
 package com.rahulislam.facepsy
 
-import android.Manifest
 import android.annotation.SuppressLint
 import android.app.Activity
 import android.content.Intent
-import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.Environment
 import android.os.Environment.getExternalStoragePublicDirectory
-import android.provider.Settings
 import android.util.Log
 import android.util.Size
+import android.view.View
 import android.widget.Button
 import android.widget.TextView
 import android.widget.Toast
-import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
-import androidx.core.app.NotificationManagerCompat
 import com.cottacush.android.hiddencam.CaptureTimeFrequency
 import com.cottacush.android.hiddencam.HiddenCam
 import com.cottacush.android.hiddencam.OnImageCapturedListener
@@ -27,6 +23,8 @@ import com.firebase.ui.auth.AuthUI.IdpConfig.EmailBuilder
 import com.google.firebase.auth.FirebaseAuth
 import com.rahulislam.facepsy.receiver.CaptureTriggerReceiver
 import com.rahulislam.facepsy.service.CrashRestartHandler
+import com.rahulislam.facepsy.setup.SetupMonitor
+import com.rahulislam.facepsy.setup.SetupStep
 import com.rahulislam.facepsy.service.SensingService
 import com.rahulislam.facepsy.service.ServiceAction
 import com.rahulislam.facepsy.service.ServiceState
@@ -34,6 +32,7 @@ import com.rahulislam.facepsy.service.getServiceState
 import com.rahulislam.facepsy.tasks.flower.Flower3x3Activity
 import com.rahulislam.facepsy.tasks.stroop.StroopDescriptionActivity
 import com.rahulislam.facepsy.ui.InstructionActivity
+import com.rahulislam.facepsy.ui.SetupActivity
 import com.rahulislam.facepsy.util.hasPermissions
 import org.json.JSONObject
 import java.io.File
@@ -52,9 +51,6 @@ import java.util.*
  * move it.**
  */
 class MainActivity : AppCompatActivity(), OnImageCapturedListener {
-    private val requiredPermissions =
-        arrayOf(Manifest.permission.WRITE_EXTERNAL_STORAGE, Manifest.permission.CAMERA)
-
     private lateinit var hiddenCam: HiddenCam
     private lateinit var baseStorageFolder: File
 
@@ -62,7 +58,8 @@ class MainActivity : AppCompatActivity(), OnImageCapturedListener {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
 
-        if (checkPermissions()) onPermissionsGranted()
+        // Permissions are requested by SetupActivity (opened from onResume).
+        if (hasPermissions(SetupStep.CAMERA_STORAGE_PERMISSIONS)) onPermissionsGranted()
 
         Thread.setDefaultUncaughtExceptionHandler(CrashRestartHandler(this))
 
@@ -125,6 +122,32 @@ class MainActivity : AppCompatActivity(), OnImageCapturedListener {
         thread.start()
     }
 
+    /** True right after returning from SetupActivity, so it isn't reopened in a loop. */
+    private var returningFromSetup = false
+
+    override fun onResume() {
+        super.onResume()
+        if (!::hiddenCam.isInitialized && hasPermissions(SetupStep.CAMERA_STORAGE_PERMISSIONS)) {
+            onPermissionsGranted()
+        }
+
+        val requiredMissing = SetupMonitor.check(this).any { it.required }
+        findViewById<Button>(R.id.finishSetupBtn).visibility = if (requiredMissing) View.VISIBLE else View.GONE
+
+        // After sign-in: show the setup checklist on first run, and again whenever the
+        // participant comes back while something required was revoked or switched off.
+        val signedIn = FirebaseAuth.getInstance().currentUser != null
+        if (returningFromSetup) {
+            returningFromSetup = false
+        } else if (signedIn && SetupMonitor.shouldShowSetup(this)) {
+            openSetup()
+        }
+    }
+
+    private fun openSetup() {
+        startActivityForResult(Intent(this, SetupActivity::class.java), RC_SETUP)
+    }
+
     /** Launches FirebaseUI sign-in if needed; otherwise starts [SensingService]. */
     private fun signInOrStartService() {
         val auth = FirebaseAuth.getInstance()
@@ -161,6 +184,8 @@ class MainActivity : AppCompatActivity(), OnImageCapturedListener {
             openSurvey(SensingService.surveyConfig["postLink"])
         }
 
+        findViewById<Button>(R.id.finishSetupBtn).setOnClickListener { openSetup() }
+
         findViewById<Button>(R.id.launchInstructionBtn).setOnClickListener {
             startActivity(Intent(this, InstructionActivity::class.java))
         }
@@ -195,6 +220,8 @@ class MainActivity : AppCompatActivity(), OnImageCapturedListener {
 
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
+
+        if (requestCode == RC_SETUP) returningFromSetup = true
 
         if (requestCode == RC_SIGN_IN) {
             if (resultCode == Activity.RESULT_OK) {
@@ -246,76 +273,11 @@ class MainActivity : AppCompatActivity(), OnImageCapturedListener {
             targetResolution = Size(CaptureTriggerReceiver.CAPTURE_WIDTH, CaptureTriggerReceiver.CAPTURE_HEIGHT)
         )
 
-        requestNotificationPermissionIfNeeded()
-    }
-
-    /**
-     * On Android 13+, asks for the notification permission so the foreground-service
-     * notification, the accessibility reminder and FCM reminders are visible.
-     */
-    private fun requestNotificationPermissionIfNeeded() {
-        if (Build.VERSION.SDK_INT >= API_TIRAMISU &&
-                !NotificationManagerCompat.from(this).areNotificationsEnabled()) {
-            requestPermissions(arrayOf(PERMISSION_POST_NOTIFICATIONS), NOTIFICATION_PERMISSION_REQUEST_CODE)
-        }
-    }
-
-    private fun checkPermissions(): Boolean {
-        return if (hasPermissions(requiredPermissions)) true
-        else {
-            requestPermissions(requiredPermissions, CAMERA_AND_STORAGE_PERMISSION_REQUEST_CODE)
-            false
-        }
-    }
-
-    override fun onRequestPermissionsResult(
-            requestCode: Int,
-            permissions: Array<out String>,
-            grantResults: IntArray
-    ) {
-        Log.d(TAG, "Permission result called")
-        if (requestCode == CAMERA_AND_STORAGE_PERMISSION_REQUEST_CODE &&
-                confirmPermissionResults(grantResults)
-        ) onPermissionsGranted()
-
-        if (requestCode == NOTIFICATION_PERMISSION_REQUEST_CODE &&
-                !NotificationManagerCompat.from(this).areNotificationsEnabled()) {
-            showEnableNotificationsDialog()
-        }
-    }
-
-    /**
-     * Fallback when the notification permission is still off: apps targeting SDK 32 or
-     * lower may not get a runtime prompt, so send the participant to the app's
-     * notification settings instead.
-     */
-    private fun showEnableNotificationsDialog() {
-        AlertDialog.Builder(this)
-                .setTitle("Allow notifications")
-                .setMessage("FacePsy shows a notification while data collection is running. Please allow notifications on the next screen.")
-                .setPositiveButton("Open settings") { _, _ ->
-                    startActivity(Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS)
-                            .putExtra(Settings.EXTRA_APP_PACKAGE, packageName))
-                }
-                .setNegativeButton("Not now", null)
-                .show()
-    }
-
-    private fun confirmPermissionResults(results: IntArray): Boolean {
-        results.forEach {
-            if (it != PackageManager.PERMISSION_GRANTED) return false
-        }
-        return true
     }
 
     companion object {
         const val RC_SIGN_IN = 123
+        private const val RC_SETUP = 124
         const val TAG = "MainActivity"
-        const val CAMERA_AND_STORAGE_PERMISSION_REQUEST_CODE = 100
-        const val NOTIFICATION_PERMISSION_REQUEST_CODE = 101
-
-        // Not in the compile SDK (28); values from Android 13 (API 33).
-        private const val API_TIRAMISU = 33
-        private const val PERMISSION_POST_NOTIFICATIONS = "android.permission.POST_NOTIFICATIONS"
     }
 }

@@ -7,14 +7,8 @@ import android.graphics.Color
 import android.os.Build
 import android.os.IBinder
 import android.os.PowerManager
-import android.provider.Settings
 import android.util.Log
-import android.view.accessibility.AccessibilityEvent
-import android.view.accessibility.AccessibilityManager
 import android.widget.Toast
-import androidx.core.app.NotificationCompat
-import androidx.core.view.accessibility.AccessibilityEventCompat
-import androidx.core.view.accessibility.AccessibilityManagerCompat
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.database.DataSnapshot
 import com.google.firebase.database.DatabaseError
@@ -32,6 +26,7 @@ import com.rahulislam.facepsy.data.FirebaseRefs.ConfigDocs
 import com.rahulislam.facepsy.data.FirebaseRefs.RealtimeDb
 import com.rahulislam.facepsy.receiver.CaptureTriggerReceiver
 import com.rahulislam.facepsy.receiver.ScreenEventLogReceiver
+import com.rahulislam.facepsy.setup.SetupMonitor
 import com.rahulislam.facepsy.util.logService
 import kotlinx.coroutines.*
 import kotlin.collections.HashMap
@@ -47,6 +42,7 @@ import kotlin.collections.HashMap
  * - keeps an NTP-synced [kronosClock] used to timestamp every record;
  * - publishes presence to Realtime Database `/status/{uid}` and `users/{uid}.online`;
  * - registers [CaptureTriggerReceiver] and [ScreenEventLogReceiver] at runtime;
+ * - checks every minute that the participant setup is still complete ([SetupMonitor]);
  * - holds a partial wake lock so collection is not paused by Doze.
  */
 class SensingService : Service() {
@@ -89,7 +85,7 @@ class SensingService : Service() {
         val notification = createNotification()
         startForeground(FOREGROUND_NOTIFICATION_ID, notification)
 
-        notifyIfAccessibilityDisabled(applicationContext)
+        SetupMonitor.check(applicationContext)
 
         listenToConfig(ConfigDocs.TRIGGERS) { snapshot ->
             Log.d(TAG, "Current data: ${snapshot.data?.get("apps")?.javaClass?.kotlin}")
@@ -173,18 +169,20 @@ class SensingService : Service() {
                 }
             }
 
-        // Heartbeat loop: logs once per minute while the service is started.
+        // Heartbeat loop: once per minute while the service is started, logs and makes sure
+        // the accessibility service is still enabled.
         GlobalScope.launch(Dispatchers.IO) {
             while (isServiceStarted) {
                 launch(Dispatchers.IO) {
                     logService("Service heartbeat")
+                    SetupMonitor.check(applicationContext)
                 }
                 delay(HEARTBEAT_INTERVAL_MS)
             }
             logService("End of the loop for the service")
         }
 
-        notifyIfAccessibilityDisabled(applicationContext)
+        SetupMonitor.check(applicationContext)
 
         Thread.setDefaultUncaughtExceptionHandler(CrashRestartHandler(this))
 
@@ -291,75 +289,13 @@ class SensingService : Service() {
             .build()
     }
 
-    /**
-     * Returns true if any accessibility service of this package is enabled. Checks the
-     * secure setting first, then falls back to two AccessibilityManager APIs.
-     */
-    @Synchronized
-    private fun isAccessibilityEnabled(context: Context): Boolean {
-        var enabled = false
-        val accessibilityManager = context.getSystemService(Context.ACCESSIBILITY_SERVICE) as AccessibilityManager
-
-        // Try to fetch active accessibility services directly from Android OS database instead of broken API...
-        val settingValue = Settings.Secure.getString(context.contentResolver, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES)
-        if (settingValue != null) {
-            if (settingValue.contains(context.packageName)) {
-                enabled = true
-            }
-        }
-        if (!enabled) {
-            try {
-                val enabledServices = AccessibilityManagerCompat.getEnabledAccessibilityServiceList(accessibilityManager, AccessibilityEventCompat.TYPES_ALL_MASK)
-                enabled = enabledServices.any { it.id.contains(context.packageName) }
-            } catch (e: NoSuchMethodError) {
-            }
-        }
-        if (!enabled) {
-            try {
-                val enabledServices = accessibilityManager.getEnabledAccessibilityServiceList(AccessibilityEvent.TYPES_ALL_MASK)
-                enabled = enabledServices.any { it.id.contains(context.packageName) }
-            } catch (e: NoSuchMethodError) {
-            }
-        }
-
-        Log.i(TAG, enabled.toString())
-        return enabled
-    }
-
-    /**
-     * If [com.rahulislam.facepsy.FacePsyAccessibilityService] is not enabled, posts a
-     * notification that opens the accessibility settings. Returns whether it is enabled.
-     */
-    @Synchronized
-    fun notifyIfAccessibilityDisabled(c: Context): Boolean {
-        if (!isAccessibilityEnabled(c)) {
-            val builder = NotificationCompat.Builder(c, NOTIFICATION_CHANNEL_ID)
-            builder.setSmallIcon(R.mipmap.ic_launcher)
-            builder.setContentTitle("Please enable FacePsy")
-            builder.setContentText("Tap here to activate accessibility service")
-            builder.setAutoCancel(true)
-            builder.setOnlyAlertOnce(true) // notify the user only once
-            builder.setDefaults(NotificationCompat.DEFAULT_ALL)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) builder.setChannelId(NOTIFICATION_CHANNEL_ID)
-            val accessibilitySettings = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
-            accessibilitySettings.flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
-            val clickIntent = PendingIntent.getActivity(c, 0, accessibilitySettings, PendingIntent.FLAG_UPDATE_CURRENT)
-            builder.setContentIntent(clickIntent)
-            val notificationManager = c.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-            notificationManager.notify(ACCESSIBILITY_NOTIFICATION_ID, builder.build())
-            return false
-        }
-        return true
-    }
-
     companion object {
         const val TAG = "SensingService"
 
         // Persisted/visible identifiers kept from the original EndlessService; do not change.
-        private const val NOTIFICATION_CHANNEL_ID = "ENDLESS SERVICE CHANNEL"
+        internal const val NOTIFICATION_CHANNEL_ID = "ENDLESS SERVICE CHANNEL"
         private const val WAKE_LOCK_TAG = "EndlessService::lock"
         private const val FOREGROUND_NOTIFICATION_ID = 1
-        private const val ACCESSIBILITY_NOTIFICATION_ID = 42
 
         private const val HEARTBEAT_INTERVAL_MS = 1L * 60 * 1000
 

@@ -100,4 +100,20 @@
         app:layout_constraintTop_toTopOf="parent"
         app:layout_constraintVertical_bias="0.615" />
 
+    <!-- Shown while a required setup step is missing; opens SetupActivity. -->
+    <Button
+        android:id="@+id/finishSetupBtn"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="24dp"
+        android:layout_marginTop="24dp"
+        android:layout_marginEnd="24dp"
+        android:backgroundTint="@color/setupRequired"
+        android:text="Finish setup: FacePsy is not collecting data"
+        android:textColor="#FFFFFF"
+        android:visibility="gone"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toBottomOf="@+id/launchPostSurveyBtn" />
+
 </androidx.constraintlayout.widget.ConstraintLayout>

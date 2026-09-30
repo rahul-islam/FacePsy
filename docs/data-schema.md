@@ -51,8 +51,13 @@ with Gson, so JSON numbers are stored as doubles.
 | Field | Type | Description |
 |---|---|---|
 | `user_id` | string or null | Firebase Auth uid. |
-| `action` | string | An intent action (`android.intent.action.SCREEN_ON`, `SCREEN_OFF`, `USER_PRESENT`), written by `receiver/ScreenEventLogReceiver`; **or** the package name of the app that came to the foreground, written by `FacePsyAccessibilityService`. |
+| `action` | string | One of: an intent action (`android.intent.action.SCREEN_ON`, `SCREEN_OFF`, `USER_PRESENT`), written by `receiver/ScreenEventLogReceiver`; the package name of the app that came to the foreground, written by `FacePsyAccessibilityService`; or a setup change `SETUP_<step>_OK` / `SETUP_<step>_MISSING`, written by `setup/SetupMonitor` (see below). |
 | `timestamp` | number | Kronos time (ms). |
+
+Setup changes: `<step>` is `CAMERA`, `ACCESSIBILITY`, `NOTIFICATIONS`, `BATTERY` or
+`KEEP_PERMISSIONS`. One document is written for each step when a process first checks
+it (after every app start) and whenever it changes, so a `SETUP_ACCESSIBILITY_MISSING`
+followed later by `SETUP_ACCESSIBILITY_OK` brackets a gap in app-usage data.
 
 ### `flowerGameData` (one document per Flower game round)
 

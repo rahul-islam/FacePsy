@@ -33,7 +33,8 @@ app/src/main/java/com/rahulislam/facepsy/
   processing/  ImageProcessingWorker           (ML Kit + TFLite AU model + upload)
   messaging/   FacePsyMessagingService         (FCM)
   tasks/       flower/ (3x3 + 4x4 memory game, FlowerGameCommon), stroop/
-  ui/          InstructionActivity
+  setup/       SetupStep, SetupMonitor          (permission checklist + re-checks)
+  ui/          SetupActivity, InstructionActivity
   util/        ContextExt, Log
 library/       vendored HiddenCam (Apache-2.0, see NOTICE); don't restyle, keep diffable
 scripts/       configure_firebase.py (seeds Firestore `config`)

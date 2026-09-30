@@ -87,6 +87,23 @@ sequenceDiagram
 - `FacePsyMessagingService` shows FCM push notifications, such as survey reminders,
   and opens `MainActivity` when tapped.
 
+## Participant setup and permissions
+
+`ui/SetupActivity` is a single checklist (built from `setup/SetupStep`) that explains
+each permission, shows whether it is on, and opens the right system screen for it.
+Camera/storage and accessibility are required; notifications, unrestricted battery use
+and "keep permissions if unused" (Android 11+) are recommended.
+
+- `MainActivity` opens it after sign-in until onboarding is completed, then again on any
+  visit while a required step is missing, and at most once a day for missing
+  recommended steps.
+- `setup/SetupMonitor.check` runs every minute (from `SensingService`), on every unlock
+  and whenever the home screen resumes. It logs `SETUP_<step>_OK/_MISSING` changes to
+  `phoneUsageData` and, while a required step is missing, shows one notification that
+  opens the checklist. It never changes a setting itself.
+- A force stop turns the accessibility service off, and a revoked runtime permission
+  kills the process; in both cases the participant is asked again through this flow.
+
 ## Package map
 
 ```
@@ -106,6 +123,9 @@ com.rahulislam.facepsy
 │   ├── CaptureTriggerReceiver    runs a HiddenCam capture session, queues extraction
 │   ├── ScreenEventLogReceiver    logs screen on/off/unlock
 │   └── BootReceiver              restarts the service after boot
+├── setup/
+│   ├── SetupStep                 checklist items: camera/storage, accessibility, notifications, ...
+│   └── SetupMonitor              re-checks setup, logs changes, reminder notification
 ├── processing/
 │   └── ImageProcessingWorker     ML Kit + TFLite feature extraction and upload
 ├── messaging/
@@ -114,6 +134,7 @@ com.rahulislam.facepsy
 │   ├── flower/                   visual-spatial memory game (3x3 and 4x4 grids)
 │   └── stroop/                   Stroop color-word task
 ├── ui/
+│   ├── SetupActivity             onboarding / setup checklist
 │   └── InstructionActivity       participant instructions
 └── util/                         permission helpers, service logging
 ```

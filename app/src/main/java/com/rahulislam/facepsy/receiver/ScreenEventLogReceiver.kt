@@ -8,6 +8,7 @@ import android.util.Log
 import com.google.firebase.auth.FirebaseAuth
 import com.rahulislam.facepsy.data.FirebaseRefs
 import com.rahulislam.facepsy.data.FirebaseRefs.Collections
+import com.rahulislam.facepsy.setup.SetupMonitor
 import com.rahulislam.facepsy.service.SensingService
 
 /**
@@ -21,6 +22,9 @@ class ScreenEventLogReceiver : BroadcastReceiver() {
 
     override fun onReceive(context: Context, intent: Intent) {
         Log.i(TAG, "intent")
+        if (intent.action == Intent.ACTION_USER_PRESENT) {
+            SetupMonitor.check(context)
+        }
         val appUsageData = hashMapOf(
                 "user_id" to FirebaseAuth.getInstance().currentUser?.uid,
                 "action" to intent.action.toString(),

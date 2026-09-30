@@ -8,4 +8,9 @@
     <color name="GREEN">#008000</color>
     <color name="BLUE">#0000FF</color>
     <color name="YELLOW">#FFFF00</color>
+    <!-- Setup checklist status colors -->
+    <color name="setupDone">#2E7D32</color>
+    <color name="setupRequired">#C62828</color>
+    <color name="setupRecommended">#EF6C00</color>
+    <color name="setupCardBackground">#F3F5F4</color>
 </resources>

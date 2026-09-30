@@ -51,7 +51,8 @@ app/src/main/java/com/rahulislam/facepsy/
 ├── processing/  # ImageProcessingWorker: ML Kit + TFLite feature extraction
 ├── messaging/   # FCM notifications
 ├── tasks/       # Flower (visual-spatial memory) and Stroop cognitive tasks
-├── ui/          # instructions screen
+├── setup/       # setup checklist steps and monitoring (SetupStep, SetupMonitor)
+├── ui/          # setup checklist and instructions screens
 └── util/
 app/src/main/assets/AU_200.tflite   # action-unit model
 library/                            # HiddenCam background camera library (Apache-2.0)
@@ -141,10 +142,12 @@ python configure_firebase.py --cred ./cred/<service-account-key>.json --config c
 4. The app starts its background service and collects data whenever a trigger fires.
 
 ### Participant permissions
-- **Camera** and **storage**: requested at first launch. Frames are written to `DCIM/HiddenCam` briefly before they are processed and deleted.
-- **Accessibility service**: enable *FacePsy* under *Settings → Accessibility*. The app posts a notification that links there while it is disabled. It is needed for app-open triggers and foreground-app logging.
-- **Notifications** (Android 13+): needed for the "Data collection is active" notification, the accessibility reminder and FCM reminders. If notifications are off, the app asks for them at launch and, if necessary, opens its notification settings.
-- Exempting the app from battery optimization improves background reliability.
+After sign-in, FacePsy opens a **Set up FacePsy** checklist. It explains each item, shows whether it is on, and opens the right system screen:
+- **Camera and storage** (required): frames are written to `DCIM/HiddenCam` briefly before they are processed and deleted. If the participant chose "Don't allow" twice, the button opens App info instead.
+- **Accessibility service** (required): needed for app-open triggers and foreground-app logging. On Android 13+, if FacePsy was installed from a downloaded APK, the switch is greyed out until the participant opens *App info → ⋮ → Allow restricted settings*.
+- **Notifications**, **unrestricted battery use** and **keep permissions if unused** (recommended).
+
+Afterwards, FacePsy checks every minute and on each unlock. If something required is revoked or switched off later, it shows a "FacePsy needs your attention" notification that opens the checklist, and the checklist opens again when the app is opened. A **force stop** from Settings stops everything and switches the accessibility service off; opening FacePsy once brings collection back and asks for accessibility again.
 
 ## Data collected
 Records go to Firestore collections:
