@@ -5,26 +5,26 @@ workspace {
         researcher = person "Researcher" "A researcher running the study."
         
         
-        facepsySystem = softwareSystem "FacePsy System" "Oprtusistic facial behavior data collection system." {
+        facepsySystem = softwareSystem "FacePsy System" "Opportunistic facial behavior data collection system." {
                 facepsyApp = container "FacePsy App" "" "Android" {
-                    hiddencam = component "Oprtusistic background camera sensing" "" "Camera API"
+                    hiddencam = component "Opportunistic background camera sensing" "" "Camera API"
                     firebaseConn = component "Firebase Connector" "" "Firebase SDK"
-                    appUsageEventLoggger = component "Usage Event Listner" "" "UsageStat API"
+                    appUsageEventLogger = component "Usage Event Listener" "" "Accessibility Service, screen broadcasts"
                     cogGames = component "Cognitive Tasks and Survey" "" ""
                     notification = component "Daily Notification" "" "Firebase Cloud Messaging"
                     behaviorSensing = component "Facial Behavior Sensing" "" "TensorFlow Lite, ML Kit"
-                    # survyeWebview = component "Survey View" "" "Web View"
+                    # surveyWebview = component "Survey View" "" "Web View"
                 }
-                dashboardApp = container "Compliance Dashboard" "" "Python Plotly"
+                dashboardApp = container "Compliance Dashboard" "Not part of this repository." "Python Plotly"
 
         }
         
-        qualtricsSystem = softwareSystem "Qualtrics" "An online survey platform."
+        qualtricsSystem = softwareSystem "Qualtrics" "External online survey platform (survey links configured in Firestore)."
         firebaseSystem = softwareSystem "Google Firebase" "An app development platform." {
             fcm = container "Firebase Cloud Messaging" "" "Cloud solution for messages and notifications."
         }
         
-        bigquerySystem = softwareSystem "Google Big Query" "Data warehouse."
+        bigquerySystem = softwareSystem "Google Big Query" "External data warehouse used for analysis; not part of this repository."
         
         participant -> facepsySystem "Uses"
         participant -> facepsyApp "Uses"
@@ -46,7 +46,7 @@ workspace {
         
         notification -> fcm "Cloud Messaging API"
         
-        appUsageEventLoggger -> hiddencam "Triggers Data Collection"
+        appUsageEventLogger -> hiddencam "Triggers Data Collection"
         hiddencam -> behaviorSensing "Schedule background processing"
         behaviorSensing -> firebaseConn "Store to Firebase"
         

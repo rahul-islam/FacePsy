@@ -1,0 +1,14 @@
+FacePsy
+Copyright (c) 2024 stevenshci
+Licensed under the MIT License (see LICENSE).
+
+This product includes software developed by Cotta & Cush Limited:
+
+  HiddenCam (library/, package com.cottacush.android.hiddencam)
+  Copyright (c) 2019 Cotta & Cush Limited
+  https://github.com/CottaCush/HiddenCam
+  Licensed under the Apache License, Version 2.0
+  (http://www.apache.org/licenses/LICENSE-2.0)
+
+  Modifications for FacePsy: capture callbacks carry a trigger name and a JSON
+  metadata object, and captured file names include the trigger name.
