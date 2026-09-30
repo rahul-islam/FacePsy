@@ -31,7 +31,7 @@ When a **trigger** fires, the app records the front camera in the background for
 
 Each frame then goes through the following steps:
 1. It is queued to a WorkManager job.
-2. The job runs **ML Kit** face detection (landmarks, contours, head pose, eye/smile probabilities) and a **TensorFlow Lite** model (`AU_200.tflite`) that estimates 12 facial action units.
+2. The job runs **ML Kit** face detection (landmarks, contours, head pose, eye/smile probabilities) and a **LiteRT** (TensorFlow Lite) model (`AU_200.tflite`) that estimates 12 facial action units.
 3. It uploads one Firestore document per face, plus eye-region crops to Cloud Storage.
 4. It deletes the frame.
 
@@ -62,8 +62,8 @@ c4model/                            # C4 / Structurizr model of the whole study 
 ```
 
 ## Requirements
-1. **JDK 8.** The project uses Android Gradle Plugin 3.4.3 / Gradle 5.1.1, which don't run on newer JDKs (including Android Studio's bundled JDK). One option is [Amazon Corretto 8](https://docs.aws.amazon.com/corretto/latest/corretto-8-ug/downloads-list.html). A portable tarball is enough; point `JAVA_HOME` at it (in Android Studio: *Settings → Build Tools → Gradle → Gradle JDK*).
-2. **Android SDK.** Install it with Android Studio or the command-line tools. Gradle downloads platform 28 and build-tools 28.0.3 automatically.
+1. **JDK 17.** The project uses Android Gradle Plugin 8.7 / Gradle 8.9. One option is [Amazon Corretto 17](https://docs.aws.amazon.com/corretto/latest/corretto-17-ug/downloads-list.html); a portable tarball is enough. Point `JAVA_HOME` at it (in Android Studio: *Settings → Build Tools → Gradle → Gradle JDK*). Very new JDKs (e.g. 25) can't run Gradle 8.9.
+2. **Android SDK** with platform 35 (compile SDK). The app still targets SDK 28.
 3. A Firebase project (see below).
 
 No NDK, CMake or OpenCV is required.
@@ -127,13 +127,13 @@ python configure_firebase.py --cred ./cred/<service-account-key>.json --config c
 1. Clone the repository.
 2. Add `app/google-services.json` (see Firebase Setup).
 3. Create `local.properties` containing `sdk.dir=/path/to/Android/sdk`. Android Studio creates it automatically.
-4. Build with JDK 8:
+4. Build with JDK 17:
    ```bash
-   export JAVA_HOME=/path/to/jdk8
+   export JAVA_HOME=/path/to/jdk17
    ./gradlew :app:assembleDebug
    adb install -r app/build/outputs/apk/debug/app-debug.apk
    ```
-   You can also open the project in Android Studio with the Gradle JDK set to JDK 8 and run it.
+   You can also open the project in Android Studio with the Gradle JDK set to JDK 17 and run it.
 
 ## Usage
 1. Open the app.
@@ -168,10 +168,8 @@ The following parameters can be configured in Firestore (`config` collection):
 4. Number of Stroop rounds
 
 ## Troubleshooting
-- **`Unsupported class file major version` / Gradle fails to start.** Gradle is running on a JDK newer than 11; set `JAVA_HOME` (or the Android Studio Gradle JDK) to JDK 8.
+- **`Unsupported class file major version` / Gradle fails to start.** Gradle is running on an unsupported JDK; set `JAVA_HOME` (or the Android Studio Gradle JDK) to JDK 17.
 - **`File google-services.json is missing`.** Copy your Firebase config to `app/google-services.json`.
-- **Many `unexpected element (uri:"", local:"base-extension")` warnings.** These are harmless: the old Android Gradle Plugin can't parse metadata from newer SDK packages.
-- **"This app isn't 16 KB compatible" dialog on Android 15+.** This is expected for debug builds. The bundled TFLite and ML Kit native libraries predate 16 KB page sizes (see [docs/known-issues.md](docs/known-issues.md)).
 - **`PERMISSION_DENIED` in logcat before signing in.** This is expected with the rules above; the config listeners need an authenticated user.
 
 ## Contributing

@@ -7,14 +7,15 @@ reading: [docs/architecture.md](docs/architecture.md),
 
 ## Build
 
-The toolchain is old: AGP 3.4.3 and Gradle 5.1.1. It needs **JDK 8** (11 at most);
-newer JDKs, including Android Studio's bundled JBR, won't run it.
+Toolchain: AGP 8.7, Gradle 8.9, Kotlin 1.9, **JDK 17** (Gradle 8.9 doesn't run on JDK 25,
+Android Studio's bundled JBR, so point `JAVA_HOME` / the Gradle JDK at a JDK 17).
+compileSdk 35, **targetSdk 28** (deliberately; raising it changes runtime behavior).
 
 ```bash
-export JAVA_HOME=/path/to/jdk8            # e.g. a portable Corretto 8 in ~/.jdks
+export JAVA_HOME=/path/to/jdk17           # e.g. a portable Corretto 17 in ~/.jdks
 echo "sdk.dir=$HOME/Library/Android/sdk" > local.properties
 cp /path/to/google-services.json app/     # gitignored; Firebase project config
-./gradlew :app:assembleDebug              # SDK platform 28 / build-tools 28.0.3 auto-download
+./gradlew :app:assembleDebug
 adb install -r app/build/outputs/apk/debug/app-debug.apk
 ```
 

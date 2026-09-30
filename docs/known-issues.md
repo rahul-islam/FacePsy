@@ -34,6 +34,16 @@ These were found during the refactor and verified on a Pixel 10 (Android 17) on
   `auth.currentUser.toString()` while no user was signed in (NPE). The log line now uses
   a plain message.
 
+- **16 KB page size warning ("Android App Compatibility" dialog).** TFLite 2.x and ML Kit
+  face-detection 16.0.0 shipped 4 KB-aligned native libraries. Now ML Kit 16.1.7 and
+  LiteRT 1.4.2 (same `org.tensorflow.lite` API) are used; both libraries are 16 KB-aligned
+  on arm64-v8a and x86_64 (checked in the APK). The unused `firebase-ml-model-interpreter`
+  was removed. Note: ML Kit 16.1.7 may produce slightly different landmark/contour/
+  probability values than 16.0.0, which matters if a study mixes app versions.
+- **Old toolchain.** Upgraded to AGP 8.7.3, Gradle 8.9, Kotlin 1.9.25, JDK 17, compile
+  SDK 35 (target SDK unchanged at 28). Removed `kotlin-android-extensions` (unused) and
+  the broken Spotless setup (it pointed to a missing license file).
+
 ## Runtime bugs
 
 1. **Hidden crash button.** `MainActivity` wires the invisible `startBtn` to `crashMe()`,
@@ -78,17 +88,11 @@ These were found during the refactor and verified on a Pixel 10 (Android 17) on
 12. **`main` no longer builds.** Its buildscript depends on `com.novoda:bintray-release`,
     which disappeared with Bintray. The refactor branch removes the dependency, along
     with `bintrayconfig.gradle` and the `dl.bintray.com` repository.
-13. **Old toolchain:** AGP 3.4.3, Gradle 5.1.1, compile/target SDK 28, Kotlin 1.3.70,
-    CameraX `1.0.0-alpha06`, `jcenter()`, `kotlin-android-extensions`, two Firebase
-    BoMs (25.4.1 and 25.12.0), and the deprecated `firebase-ml-model-interpreter`.
-    Building needs JDK 8–11. Upgrading changes build output and is out of scope for the
-    refactor.
-14. **16 KB page size.** `libtensorflowlite_jni.so` (TFLite 2.3.0) and
-    `libface_detector_v2_jni.so` (ML Kit face-detection 16.0.0) aren't 16 KB aligned,
-    so Android 15+ shows a compatibility warning for debuggable builds. Fixing this
-    means upgrading those libraries.
-15. **Spotless** is only applied to `library/` and points to a missing
-    `spotless.license.kt`.
+13. **Target SDK is still 28.** The toolchain was upgraded (see Fixed), but raising the
+    target changes runtime behavior (foreground-service types, scoped storage,
+    notification permission, background limits) and needs its own migration and testing.
+    Other old dependencies remain: CameraX `1.0.0-alpha06` (vendored HiddenCam),
+    `jcenter()`, two Firebase BoMs (25.4.1 and 25.12.0), coroutines 1.1.1.
 
 ## Removed in the refactor (no runtime effect)
 

@@ -65,7 +65,7 @@ class CaptureTriggerReceiver : BroadcastReceiver(), OnImageCapturedListener {
 
         if (TriggerContract.ACTION_TRIGGER == action && !isCapturing) {
             val triggerName = intent.extras!!.getString(TriggerContract.EXTRA_PACKAGE_NAME).toString()
-            val duration = intent.extras!!.getString(TriggerContract.EXTRA_DURATION).toLong()
+            val duration = intent.extras!!.getString(TriggerContract.EXTRA_DURATION)!!.toLong()
             val gameId = intent.extras!!.getString(TriggerContract.EXTRA_GAME_ID).toString()
             startCaptureSession(context, RECURRING_INTERVAL_MS, duration, triggerName, gameId)
         }

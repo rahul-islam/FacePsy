@@ -258,7 +258,7 @@ class ImageProcessingWorker(context: Context, params: WorkerParameters) : Corout
         val width = eyeContour[8].x.toInt() - eyeContour[0].x.toInt() + 2 * EYE_CROP_MARGIN_PX
         val height = eyeContour[12].y.toInt() - eyeContour[4].y.toInt() + 2 * EYE_CROP_MARGIN_PX
 
-        val eyeCrop = Bitmap.createBitmap(image.bitmapInternal, left, top, width, height, matrix, true)
+        val eyeCrop = Bitmap.createBitmap(image.bitmapInternal!!, left, top, width, height, matrix, true)
 
         val uid = FirebaseAuth.getInstance().currentUser?.uid.toString()
         val eyeRegionRef = FirebaseStorage.getInstance().reference

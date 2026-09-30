@@ -77,10 +77,10 @@ class Flower3x3Activity : AppCompatActivity(), View.OnClickListener {
             statusText?.setText("tap start to begin the task")
         } else {
             // Returning from the 4x4 grid after a loss
-            gameId = intent.extras.getString(FlowerGame.EXTRA_GAME_ID)
-            glowCount = intent.extras.getInt(FlowerGame.EXTRA_GLOWS)
-            correct = intent.extras.getInt(FlowerGame.EXTRA_CORRECT)
-            incorrect = intent.extras.getInt(FlowerGame.EXTRA_INCORRECT)
+            gameId = intent.extras!!.getString(FlowerGame.EXTRA_GAME_ID)!!
+            glowCount = intent.extras!!.getInt(FlowerGame.EXTRA_GLOWS)
+            correct = intent.extras!!.getInt(FlowerGame.EXTRA_CORRECT)
+            incorrect = intent.extras!!.getInt(FlowerGame.EXTRA_INCORRECT)
             nextButton?.setVisibility(View.VISIBLE)
             statusText?.setText("try again, tap next to continue")
 

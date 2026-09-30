@@ -70,11 +70,11 @@ class Flower4x4Activity : AppCompatActivity(), View.OnClickListener {
         Log.d(TAG, "OnCreate")
         bindFlowerButtons(buttons, indexByViewId, this)
 
-        gameId = intent.extras.getString(FlowerGame.EXTRA_GAME_ID)
-        glowCount = intent.extras.getInt(FlowerGame.EXTRA_GLOWS)
-        correct = intent.extras.getInt(FlowerGame.EXTRA_CORRECT)
-        incorrect = intent.extras.getInt(FlowerGame.EXTRA_INCORRECT)
-        unixTime = intent.extras.getLong(FlowerGame.EXTRA_UNIX)
+        gameId = intent.extras!!.getString(FlowerGame.EXTRA_GAME_ID)!!
+        glowCount = intent.extras!!.getInt(FlowerGame.EXTRA_GLOWS)
+        correct = intent.extras!!.getInt(FlowerGame.EXTRA_CORRECT)
+        incorrect = intent.extras!!.getInt(FlowerGame.EXTRA_INCORRECT)
+        unixTime = intent.extras!!.getLong(FlowerGame.EXTRA_UNIX)
 
         nextButton?.setVisibility(View.VISIBLE)
         statusText?.setText("correct, tap next to continue")

@@ -29,7 +29,7 @@ fun setServiceState(context: Context, state: ServiceState) {
 fun getServiceState(context: Context): ServiceState {
     val sharedPrefs = getPreferences(context)
     val value = sharedPrefs.getString(KEY_SERVICE_STATE, ServiceState.STOPPED.name)
-    return ServiceState.valueOf(value)
+    return ServiceState.valueOf(value!!)
 }
 
 private fun getPreferences(context: Context): SharedPreferences {
