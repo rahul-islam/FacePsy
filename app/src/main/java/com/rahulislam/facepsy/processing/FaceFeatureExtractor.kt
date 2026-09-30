@@ -13,6 +13,7 @@ import com.google.mlkit.vision.face.FaceContour
 import com.google.mlkit.vision.face.FaceDetection
 import com.google.mlkit.vision.face.FaceDetectorOptions
 import com.rahulislam.facepsy.data.FirebaseRefs
+import kotlin.collections.ArrayDeque
 import org.json.JSONArray
 import org.json.JSONObject
 import org.tensorflow.lite.DataType
@@ -59,47 +60,62 @@ class FaceFeatureExtractor(private val context: Context) : Closeable {
         }
     }
 
-    /** Eye-crop uploads started by [analyze]; see [awaitUploads]. */
-    private val pendingUploads = ArrayList<Task<*>>()
+    /** In-flight eye-crop uploads, oldest first, with the frame they belong to. */
+    private val pendingUploads = ArrayDeque<Pair<Int, Task<*>>>()
 
     /**
      * Detects faces in [image] and returns one feature JSON object per face.
      *
-     * @param colorBitmap the upright full-color frame, used for the face and eye crops.
+     * @param frame the same frame as upright full-color crops, for the face and eye crops.
      * @param sourceName stored as `fileName` in the feature JSON.
      * @param imageBaseName used to name the eye crops (`{imageBaseName}_LEFT.png`).
+     * @param frameIndex tags the eye-crop uploads, see [oldestPendingFrame].
      * Throws if detection fails or an eye contour is missing / outside the frame.
      */
-    fun analyze(image: InputImage, colorBitmap: Bitmap, sourceName: String, imageBaseName: String): JSONArray {
+    fun analyze(image: InputImage, frame: FrameCropper, sourceName: String, imageBaseName: String, frameIndex: Int = 0): JSONArray {
         val faces = Tasks.await(detector.process(image))
-        val bitmapGray = toGrayscale(colorBitmap)
 
         val jsonArray = JSONArray()
         for (face in faces) {
-            val matrix = Matrix()
-            val auObj = computeActionUnits(face, bitmapGray, matrix)
-            uploadEyeRegion(colorBitmap, face, FaceContour.LEFT_EYE, "LEFT", imageBaseName, matrix)
-            uploadEyeRegion(colorBitmap, face, FaceContour.RIGHT_EYE, "RIGHT", imageBaseName, matrix)
+            val auObj = computeActionUnits(face, frame)
+            uploadEyeRegion(frame, face, FaceContour.LEFT_EYE, "LEFT", imageBaseName, frameIndex)
+            uploadEyeRegion(frame, face, FaceContour.RIGHT_EYE, "RIGHT", imageBaseName, frameIndex)
             jsonArray.put(buildFaceJson(face, sourceName, auObj))
         }
+        throttleUploads()
         return jsonArray
+    }
+
+    /** Blocks only while more than [MAX_UPLOADS_IN_FLIGHT] eye crops are uploading. */
+    private fun throttleUploads() {
+        dropFinishedUploads()
+        while (pendingUploads.size > MAX_UPLOADS_IN_FLIGHT) {
+            awaitQuietly(pendingUploads.removeFirst().second)
+        }
     }
 
     /** Waits until every eye-crop upload started so far has finished (success or not). */
     fun awaitUploads() {
-        val uploads = ArrayList(pendingUploads)
-        pendingUploads.clear()
-        for (task in uploads) {
-            try {
-                Tasks.await(task)
-            } catch (e: Exception) {
-                Log.i(TAG, "FAIL")
-            }
-        }
+        while (pendingUploads.isNotEmpty()) awaitQuietly(pendingUploads.removeFirst().second)
     }
 
-    val pendingUploadCount: Int
-        get() = pendingUploads.size
+    /** Frame index of the oldest eye-crop upload still running, or null if none. */
+    fun oldestPendingFrame(): Int? {
+        dropFinishedUploads()
+        return pendingUploads.firstOrNull()?.first
+    }
+
+    private fun dropFinishedUploads() {
+        while (pendingUploads.isNotEmpty() && pendingUploads.first().second.isComplete) pendingUploads.removeFirst()
+    }
+
+    private fun awaitQuietly(task: Task<*>) {
+        try {
+            Tasks.await(task)
+        } catch (e: Exception) {
+            Log.i(TAG, "FAIL")
+        }
+    }
 
     override fun close() {
         detector.close()
@@ -138,16 +154,18 @@ class FaceFeatureExtractor(private val context: Context) : Closeable {
     }
 
     /**
-     * Crops [face] from [bitmapGray], resizes it to [AU_MODEL_INPUT_SIZE]² and runs the
-     * action-unit model. Returns `{AU01: float, ...}`, or an empty object if the face box
-     * is out of bounds or the model can't be loaded.
+     * Crops [face] from [frame], converts it to grayscale, resizes it to
+     * [AU_MODEL_INPUT_SIZE]² and runs the action-unit model. Returns `{AU01: float, ...}`,
+     * or an empty object if the face box is out of bounds or the model can't be loaded.
+     * (Cropping before the grayscale conversion gives the same pixels as converting the
+     * whole frame first, since the conversion is per pixel.)
      */
-    private fun computeActionUnits(face: Face, bitmapGray: Bitmap, matrix: Matrix): JSONObject {
+    private fun computeActionUnits(face: Face, frame: FrameCropper): JSONObject {
         val auObj = JSONObject()
         val box = face.boundingBox
-        Log.i(TAG, "${bitmapGray.width} ${bitmapGray.height} ${box.left + box.width()} ${box.top} ${box.width()} ${box.height()}")
-        if (box.left >= 0 && box.top >= 0 && box.top + box.height() <= bitmapGray.height && box.left + box.width() <= bitmapGray.width) {
-            val cropFace = Bitmap.createBitmap(bitmapGray, box.left, box.top, box.width(), box.height(), matrix, true)
+        Log.i(TAG, "${frame.width} ${frame.height} ${box.left + box.width()} ${box.top} ${box.width()} ${box.height()}")
+        if (box.left >= 0 && box.top >= 0 && box.top + box.height() <= frame.height && box.left + box.width() <= frame.width) {
+            val cropFace = toGrayscale(frame.crop(box))
             val scaledBitmap = Bitmap.createScaledBitmap(cropFace, AU_MODEL_INPUT_SIZE, AU_MODEL_INPUT_SIZE, true)
             val model = auModel ?: return auObj
 
@@ -162,11 +180,11 @@ class FaceFeatureExtractor(private val context: Context) : Closeable {
 
     /**
      * Crops the eye described by [contourType] (with [EYE_CROP_MARGIN_PX] of margin on
-     * each side) from [colorBitmap] and starts uploading it as a PNG to
+     * each side) from [frame] and starts uploading it as a PNG to
      * `eyeRegion/{uid}/{imageBaseName}_{side}.png`. Throws if the contour is missing or
      * the crop falls outside the frame.
      */
-    private fun uploadEyeRegion(colorBitmap: Bitmap, face: Face, contourType: Int, side: String, imageBaseName: String, matrix: Matrix) {
+    private fun uploadEyeRegion(frame: FrameCropper, face: Face, contourType: Int, side: String, imageBaseName: String, frameIndex: Int) {
         val eyeContour = face.getContour(contourType)?.points!!
 
         val left = eyeContour[0].x.toInt() - EYE_CROP_MARGIN_PX
@@ -174,7 +192,7 @@ class FaceFeatureExtractor(private val context: Context) : Closeable {
         val width = eyeContour[8].x.toInt() - eyeContour[0].x.toInt() + 2 * EYE_CROP_MARGIN_PX
         val height = eyeContour[12].y.toInt() - eyeContour[4].y.toInt() + 2 * EYE_CROP_MARGIN_PX
 
-        val eyeCrop = Bitmap.createBitmap(colorBitmap, left, top, width, height, matrix, true)
+        val eyeCrop = frame.crop(Rect(left, top, left + width, top + height))
 
         val uid = FirebaseAuth.getInstance().currentUser?.uid.toString()
         val eyeRegionRef = FirebaseStorage.getInstance().reference
@@ -183,7 +201,7 @@ class FaceFeatureExtractor(private val context: Context) : Closeable {
         val baos = ByteArrayOutputStream()
         eyeCrop.compress(Bitmap.CompressFormat.PNG, 100, baos)
 
-        pendingUploads.add(eyeRegionRef.putBytes(baos.toByteArray())
+        pendingUploads.addLast(frameIndex to eyeRegionRef.putBytes(baos.toByteArray())
                 .addOnFailureListener { Log.i(TAG, "FAIL") }
                 .addOnSuccessListener { Log.i(TAG, FirebaseAuth.getInstance().currentUser?.uid.toString()) })
     }
@@ -241,5 +259,8 @@ class FaceFeatureExtractor(private val context: Context) : Closeable {
 
         /** Padding added around each side of the eye contour when cropping. */
         const val EYE_CROP_MARGIN_PX = 20
+
+        /** Eye-crop uploads allowed to run in the background before analysis waits. */
+        private const val MAX_UPLOADS_IN_FLIGHT = 40
     }
 }

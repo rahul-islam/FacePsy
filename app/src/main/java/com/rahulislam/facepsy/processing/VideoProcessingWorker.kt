@@ -1,15 +1,12 @@
 package com.rahulislam.facepsy.processing
 
 import android.content.Context
-import android.graphics.Bitmap
-import android.graphics.Matrix
 import android.media.MediaCodec
 import android.media.MediaExtractor
 import android.media.MediaFormat
 import android.media.MediaMetadataRetriever
 import android.media.MediaMuxer
 import android.net.Uri
-import android.os.Build
 import android.util.Log
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
@@ -33,12 +30,13 @@ import java.nio.ByteBuffer
  *
  * 1. **Audio:** copies the audio track, without re-encoding, into an `.m4a`, uploads it to
  *    Cloud Storage `audio/{uid}/{session}.m4a` and writes an `audioRecordings` document.
- * 2. **Video:** decodes every [FRAME_STEP]-th frame and runs [FaceFeatureExtractor] on it,
+ * 2. **Video:** decodes the frames with the hardware decoder ([VideoFrameDecoder]) and runs
+ *    [FaceFeatureExtractor] on every [FRAME_STEP]-th one (ML Kit gets the raw YUV frame),
  *    writing one `features` document per face per frame (the same fields as photos, plus
  *    `metadata.frameIndex`, `metadata.frameTimeMs`, `metadata.source = "video"`).
  * 3. Deletes the video.
  *
- * Frames are processed in chunks and progress is saved after each chunk, so if WorkManager
+ * Progress is saved every [CHUNK_SIZE] analysed frames, so if WorkManager
  * stops the worker (e.g. its 10-minute limit) the retry resumes where it left off.
  * Document ids are deterministic, so a retry overwrites instead of duplicating.
  */
@@ -170,102 +168,74 @@ class VideoProcessingWorker(context: Context, params: WorkerParameters) : Corout
     // --- Video ---------------------------------------------------------------------------
 
     private fun processFrames(session: Session) {
-        val framePtsUs = videoFramePtsUs(session.video)
-        if (framePtsUs.isEmpty()) return
-        val indices = framePtsUs.indices.filter { it % FRAME_STEP == 0 }
-        var next = session.progressFile.takeIf { it.exists() }?.readText()?.trim()?.toIntOrNull() ?: 0
+        val resumeFrom = session.progressFile.takeIf { it.exists() }?.readText()?.trim()?.toIntOrNull() ?: 0
+        val rotation = videoRotation(session.video)
+        val decoder = VideoFrameDecoder(session.video)
+        val startedMs = System.currentTimeMillis()
 
-        val retriever = MediaMetadataRetriever()
-        try {
-            retriever.setDataSource(session.video.path)
-            val rotation = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_ROTATION)?.toIntOrNull() ?: 0
+        var firstPtsUs = -1L
+        var lastPtsUs = 0L
+        var analysedFrames = 0
+        var faceCount = 0
+        var batch = FirebaseRefs.firestore.batch()
+        var batchWrites = 0
 
-            FaceFeatureExtractor(applicationContext).use { extractor ->
-                while (next < indices.size) {
-                    val chunk = indices.subList(next, minOf(next + CHUNK_SIZE, indices.size))
-                    val batch = FirebaseRefs.firestore.batch()
-                    var writes = 0
-
-                    for ((frameIndex, frame) in decodeFrames(retriever, chunk, framePtsUs)) {
-                        val upright = upright(frame, rotation)
-                        val frameTimeMs = (framePtsUs[frameIndex] - framePtsUs[0]) / 1000
-                        val frameName = "${session.name}_f%05d".format(frameIndex)
-                        val faces = try {
-                            extractor.analyze(InputImage.fromBitmap(upright, 0), upright,
-                                    "${session.video.name}#$frameIndex", frameName)
-                        } catch (e: Exception) {
-                            // e.g. an eye partly outside the frame; skip this frame only.
-                            Log.d(TAG, "Frame $frameIndex skipped: $e")
-                            JSONArray()
-                        }
-                        for (f in 0 until faces.length()) {
-                            val doc = featureDocument(faces.getJSONObject(f), session, frameIndex, frameTimeMs)
-                            batch.set(FirebaseRefs.firestore.collection(Collections.FEATURES).document("${uid}_${frameName}_$f"), doc)
-                            writes++
-                        }
-                        if (upright !== frame) upright.recycle()
-                        frame.recycle()
-                    }
-
-                    extractor.awaitUploads()
-                    if (writes > 0) {
-                        batch.commit().addOnFailureListener { e -> Log.w(TAG, "Error adding documents", e) }
-                    }
-                    next += chunk.size
-                    session.progressFile.writeText(next.toString())
+        FaceFeatureExtractor(applicationContext).use { extractor ->
+            fun checkpoint(nextFrame: Int) {
+                if (batchWrites > 0) {
+                    batch.commit().addOnFailureListener { e -> Log.w(TAG, "Error adding documents", e) }
+                    batch = FirebaseRefs.firestore.batch()
+                    batchWrites = 0
                 }
+                // Resume from the oldest frame whose eye crops are still uploading.
+                val safe = minOf(nextFrame, extractor.oldestPendingFrame() ?: nextFrame)
+                session.progressFile.writeText(maxOf(safe, resumeFrom).toString())
             }
+
+            decoder.decode { frameIndex, ptsUs, image ->
+                if (firstPtsUs < 0) firstPtsUs = ptsUs
+                lastPtsUs = ptsUs
+                if (frameIndex < resumeFrom || frameIndex % FRAME_STEP != 0) return@decode
+                val frameTimeMs = (ptsUs - firstPtsUs) / 1000
+                val frameName = "${session.name}_f%05d".format(frameIndex)
+                val faces = try {
+                    extractor.analyze(InputImage.fromMediaImage(image, rotation),
+                            YuvFrameCropper(image, rotation, decoder.isBt709),
+                            "${session.video.name}#$frameIndex", frameName, frameIndex)
+                } catch (e: Exception) {
+                    // e.g. an eye partly outside the frame; skip this frame only.
+                    Log.d(TAG, "Frame $frameIndex skipped: $e")
+                    JSONArray()
+                }
+                analysedFrames++
+                for (f in 0 until faces.length()) {
+                    val doc = featureDocument(faces.getJSONObject(f), session, frameIndex, frameTimeMs)
+                    batch.set(FirebaseRefs.firestore.collection(Collections.FEATURES).document("${uid}_${frameName}_$f"), doc)
+                    batchWrites++
+                    faceCount++
+                }
+                if (analysedFrames % CHUNK_SIZE == 0) checkpoint(frameIndex + 1)
+            }
+
+            extractor.awaitUploads()
+            checkpoint(Int.MAX_VALUE)
+        }
+
+        val videoSeconds = (lastPtsUs - maxOf(firstPtsUs, 0L)) / 1e6
+        val elapsedSeconds = (System.currentTimeMillis() - startedMs) / 1e3
+        Log.i(TAG, "Analysed $analysedFrames frames ($faceCount faces) of %.1f s video in %.1f s (%.1fx real time)"
+                .format(videoSeconds, elapsedSeconds, if (videoSeconds > 0) elapsedSeconds / videoSeconds else 0.0))
+    }
+
+    /** Clockwise rotation (degrees) needed to show the recorded frames upright. */
+    private fun videoRotation(video: File): Int {
+        val retriever = MediaMetadataRetriever()
+        return try {
+            retriever.setDataSource(video.path)
+            retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_ROTATION)?.toIntOrNull() ?: 0
         } finally {
             retriever.release()
         }
-    }
-
-    /** Presentation times (µs) of all video frames, in display order. */
-    private fun videoFramePtsUs(video: File): List<Long> {
-        val extractor = MediaExtractor()
-        try {
-            extractor.setDataSource(video.path)
-            val track = (0 until extractor.trackCount).firstOrNull {
-                extractor.getTrackFormat(it).getString(MediaFormat.KEY_MIME)?.startsWith("video/") == true
-            } ?: return emptyList()
-            extractor.selectTrack(track)
-            val times = ArrayList<Long>()
-            while (extractor.sampleTime >= 0) {
-                times.add(extractor.sampleTime)
-                extractor.advance()
-            }
-            return times.sorted()
-        } finally {
-            extractor.release()
-        }
-    }
-
-    /** Decodes the frames at [indices] (consecutive when [FRAME_STEP] is 1). */
-    private fun decodeFrames(retriever: MediaMetadataRetriever, indices: List<Int>, framePtsUs: List<Long>): List<Pair<Int, Bitmap>> {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-            if (FRAME_STEP == 1) {
-                return indices.zip(retriever.getFramesAtIndex(indices.first(), indices.size))
-            }
-            return indices.mapNotNull { i -> retriever.getFrameAtIndex(i)?.let { i to it } }
-        }
-        return indices.mapNotNull { i ->
-            retriever.getFrameAtTime(framePtsUs[i], MediaMetadataRetriever.OPTION_CLOSEST)?.let { i to it }
-        }
-    }
-
-    /**
-     * Returns [frame] rotated upright. Decoders may or may not apply the video's rotation,
-     * so for 90/270 only landscape frames are rotated (the camera records portrait).
-     */
-    private fun upright(frame: Bitmap, rotation: Int): Bitmap {
-        val needsRotation = when (rotation) {
-            90, 270 -> frame.width > frame.height
-            180 -> true
-            else -> false
-        }
-        if (!needsRotation) return frame
-        val matrix = Matrix().apply { postRotate(rotation.toFloat()) }
-        return Bitmap.createBitmap(frame, 0, 0, frame.width, frame.height, matrix, true)
     }
 
     /** Same document shape as photo features, plus video frame metadata. */
@@ -313,8 +283,8 @@ class VideoProcessingWorker(context: Context, params: WorkerParameters) : Corout
          */
         const val FRAME_STEP = 1
 
-        /** Frames decoded at once; bounds memory (a 1080p frame is ~8 MB). */
-        private const val CHUNK_SIZE = 5
+        /** Analysed frames between progress checkpoints / Firestore batch commits. */
+        private const val CHUNK_SIZE = 30
 
         private const val MAX_ATTEMPTS = 5
     }
