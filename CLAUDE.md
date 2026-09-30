@@ -26,6 +26,7 @@ No NDK, CMake or OpenCV is needed. There are no meaningful tests
 ```
 app/src/main/java/com/rahulislam/facepsy/
   MainActivity, FacePsyAccessibilityService   (root: FQCNs are pinned, see below)
+  FacePsyApplication                          (creates SensingService.kronosClock at process start)
   data/        FirebaseRefs, TriggerContract   (all Firebase paths + broadcast contract)
   service/     SensingService, ServiceAction, ServiceStateStore, CrashRestartHandler
   receiver/    CaptureTriggerReceiver, ScreenEventLogReceiver, BootReceiver

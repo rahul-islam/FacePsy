@@ -23,7 +23,6 @@ import com.google.firebase.database.ktx.database
 import com.google.firebase.firestore.DocumentSnapshot
 import com.google.firebase.firestore.SetOptions
 import com.google.firebase.ktx.Firebase
-import com.lyft.kronos.AndroidClockFactory
 import com.lyft.kronos.KronosClock
 import com.rahulislam.facepsy.MainActivity
 import com.rahulislam.facepsy.R
@@ -75,9 +74,10 @@ class SensingService : Service() {
                 else -> logService("This should never happen. No action in the received intent")
             }
         } else {
-            logService(
-                "with a null intent. It has been probably restarted by the system."
-            )
+            // Restarted by the system after the process died (START_STICKY). Set everything up
+            // again; otherwise the capture receivers would stay unregistered.
+            logService("with a null intent. It has been probably restarted by the system.")
+            startService()
         }
         // by returning this we make sure the service is restarted if the system kills the service
         return START_STICKY
@@ -119,8 +119,6 @@ class SensingService : Service() {
             Log.i(TAG, surveyConfig.toString())
         }
 
-        kronosClock = AndroidClockFactory.createKronosClock(applicationContext)
-        kronosClock.syncInBackground()
     }
 
     /**
@@ -377,7 +375,10 @@ class SensingService : Service() {
         /** Survey links `preLink` / `postLink` (from `config/survey`). */
         var surveyConfig = HashMap<String, String>()
 
-        /** NTP-synced clock used for every stored timestamp; initialized in [onCreate]. */
+        /**
+         * NTP-synced clock used for every stored timestamp. Initialized in
+         * [com.rahulislam.facepsy.FacePsyApplication.onCreate], before any component runs.
+         */
         lateinit var kronosClock: KronosClock
     }
 }

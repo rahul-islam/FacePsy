@@ -72,7 +72,11 @@ sequenceDiagram
 ```
 
 - `SensingService` returns `START_STICKY` and stores its state with `ServiceStateStore`,
-  so `BootReceiver` can bring it back after a reboot.
+  so `BootReceiver` can bring it back after a reboot. When Android restarts it with a
+  null intent after the process dies, it sets everything up again, as for `START`.
+- `FacePsyApplication` creates the shared NTP clock (`SensingService.kronosClock`)
+  before any component runs. The accessibility service is bound right after boot,
+  possibly before `SensingService` starts, and it needs the clock.
 - `CrashRestartHandler` is installed as the default uncaught-exception handler by
   `MainActivity` and `SensingService`. On a crash, and whenever the service is
   destroyed, it restarts the service and exits the process with code 2.
@@ -87,13 +91,14 @@ sequenceDiagram
 
 ```
 com.rahulislam.facepsy
+├── FacePsyApplication             creates the shared NTP clock at process start
 ├── MainActivity                  launcher: permissions, sign-in, starts service, home buttons
 ├── FacePsyAccessibilityService   foreground-app logging + app-open capture trigger
 ├── data/
 │   ├── FirebaseRefs              Firestore/RTDB/Storage names (data contract)
 │   └── TriggerContract           capture-trigger broadcast action, extras, duration keys
 ├── service/
-│   ├── SensingService            foreground service: config, presence, receivers, clock
+│   ├── SensingService            foreground service: config, presence, receivers
 │   ├── ServiceAction             START / STOP intent actions
 │   ├── ServiceStateStore         persisted STARTED / STOPPED state
 │   └── CrashRestartHandler       uncaught-exception handler that restarts the service

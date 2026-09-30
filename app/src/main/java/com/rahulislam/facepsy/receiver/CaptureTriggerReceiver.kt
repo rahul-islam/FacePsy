@@ -6,6 +6,8 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.hardware.Camera
 import android.os.Environment
+import android.os.Handler
+import android.os.Looper
 import android.os.Vibrator
 import android.util.Log
 import android.util.Size
@@ -22,9 +24,7 @@ import com.rahulislam.facepsy.processing.ImageProcessingWorker
 import com.rahulislam.facepsy.service.SensingService
 import org.json.JSONObject
 import java.io.File
-import java.util.*
 import java.util.concurrent.TimeUnit
-import kotlin.concurrent.schedule
 
 /**
  * Starts a timed front-camera capture session when a trigger fires, and queues every
@@ -110,13 +110,12 @@ class CaptureTriggerReceiver : BroadcastReceiver(), OnImageCapturedListener {
         hiddenCam.start()
         Log.d(TAG, "Start")
         setCapturingStatus(isCapturing)
-        // NOTE: legacy behavior, see docs/known-issues.md — stop() runs on this Timer thread
-        // and crashes the process (lifecycle markState must run on the main thread).
-        Timer("SettingUp", false).schedule(duration) {
+        // Stop on the main thread: HiddenCam.stop() updates a Lifecycle, which must happen there.
+        Handler(Looper.getMainLooper()).postDelayed({
             hiddenCam.stop()
             isCapturing = false
             setCapturingStatus(isCapturing)
-        }
+        }, duration)
     }
 
     /** Publishes [captureStatus] to Realtime Database `/captureStatus/{uid}`. */

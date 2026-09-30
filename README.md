@@ -35,13 +35,14 @@ Each frame then goes through the following steps:
 3. It uploads one Firestore document per face, plus eye-region crops to Cloud Storage.
 4. It deletes the frame.
 
-A foreground service keeps collection running. It mirrors the study config from Firestore, reports presence, and is restarted after reboots and crashes (with caveats, see [docs/known-issues.md](docs/known-issues.md)).
+A foreground service keeps collection running. It mirrors the study config from Firestore, reports presence, and is restarted after reboots and crashes.
 
 See [docs/architecture.md](docs/architecture.md) for diagrams and details.
 
 ## Project structure
 ```
 app/src/main/java/com/rahulislam/facepsy/
+├── FacePsyApplication.kt           # creates the shared NTP clock at process start
 ├── MainActivity.kt                 # launcher: permissions, sign-in, home screen
 ├── FacePsyAccessibilityService.kt  # foreground-app logging + app-open trigger
 ├── data/        # Firebase paths (FirebaseRefs) and trigger broadcast contract
@@ -142,7 +143,7 @@ python configure_firebase.py --cred ./cred/<service-account-key>.json --config c
 ### Participant permissions
 - **Camera** and **storage**: requested at first launch. Frames are written to `DCIM/HiddenCam` briefly before they are processed and deleted.
 - **Accessibility service**: enable *FacePsy* under *Settings → Accessibility*. The app posts a notification that links there while it is disabled. It is needed for app-open triggers and foreground-app logging.
-- **Notifications** (Android 13+): allow notifications for FacePsy in system settings. The app does not ask for this permission itself, and without it the "Data collection is active" notification, the accessibility reminder and FCM reminders are hidden.
+- **Notifications** (Android 13+): needed for the "Data collection is active" notification, the accessibility reminder and FCM reminders. If notifications are off, the app asks for them at launch and, if necessary, opens its notification settings.
 - Exempting the app from battery optimization improves background reliability.
 
 ## Data collected
