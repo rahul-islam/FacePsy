@@ -133,7 +133,8 @@ Realtime Database (re)connection.
 
 | Path | Content | Writer |
 |---|---|---|
-| `eyeRegion/{uid}/{imageBaseName}_LEFT.png`, `..._RIGHT.png` | Full-color crop of each eye (contour box + 20 px margin), one per face per frame. For video, `imageBaseName` is `{session}_f{frameIndex:05}`; for photos it is the frame file name without its extension. If no user is signed in, `uid` is the string `null`. | `processing/FaceFeatureExtractor` |
+| `eyeRegion/{uid}/{session}.zip` | **Video:** all eye crops of one session. Entries are `{session}_f{frameIndex:05}_{faceIndex}_{LEFT\|RIGHT}.png`: full-color crop of each eye (contour box + 20 px margin), one pair per face per analysed frame. `{session}_f{frameIndex:05}_{faceIndex}` matches the `features` document id `{uid}_{session}_f{frameIndex:05}_{faceIndex}`. | `processing/VideoProcessingWorker` (`ZipEyeCropSink`) |
+| `eyeRegion/{uid}/{imageBaseName}_LEFT.png`, `..._RIGHT.png` | **Photos** (older app versions): the same crops uploaded one file each; `imageBaseName` is the frame file name without its extension. With several faces in one photo, later faces overwrite earlier ones. If no user is signed in, `uid` is the string `null`. | `processing/ImageProcessingWorker` (`DirectUploadEyeCropSink`) |
 | `audio/{uid}/{session}.m4a` | Audio track of one capture session (AAC in MP4), copied from the recording without re-encoding. | `processing/VideoProcessingWorker` |
 
 ## Local contracts (on the device)

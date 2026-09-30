@@ -109,11 +109,11 @@ class ImageProcessingWorker(context: Context, params: WorkerParameters) : Corout
         val imageBaseName = imageFileName.substring(0, imageFileName.lastIndexOf("."))
 
         val image = InputImage.fromFilePath(applicationContext, Uri.fromFile(File(imageUriInput)))
-        val jsonArray = FaceFeatureExtractor(applicationContext).use { extractor ->
-            val jsonArray = extractor.analyze(image, BitmapFrameCropper(image.bitmapInternal!!), imageUriInput, imageBaseName)
-            extractor.awaitUploads()
-            jsonArray
+        val eyeCrops = DirectUploadEyeCropSink()
+        val jsonArray = FaceFeatureExtractor(applicationContext, eyeCrops).use { extractor ->
+            extractor.analyze(image, BitmapFrameCropper(image.bitmapInternal!!), imageUriInput, imageBaseName)
         }
+        eyeCrops.awaitUploads()
 
         File(imageUriInput).delete()
         Log.d(TAG, "Currently Processing\t" + imageUriInput)

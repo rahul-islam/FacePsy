@@ -75,6 +75,12 @@ object FirebaseRefs {
         fun eyeRegion(uid: String, imageBaseName: String, side: String) =
             "eyeRegion/$uid/${imageBaseName}_$side.png"
 
+        /**
+         * All eye-region crops of one video session, as PNG entries
+         * `{session}_f{frame:05}_{face}_{LEFT|RIGHT}.png`.
+         */
+        fun eyeRegionZip(uid: String, sessionName: String) = "eyeRegion/$uid/$sessionName.zip"
+
         /** Audio track (AAC in MP4) of one capture session. */
         fun audio(uid: String, sessionName: String) = "audio/$uid/$sessionName.m4a"
     }

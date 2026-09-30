@@ -33,12 +33,13 @@ import java.nio.ByteBuffer
  * 2. **Video:** decodes the frames with the hardware decoder ([VideoFrameDecoder]) and runs
  *    [FaceFeatureExtractor] on every [FRAME_STEP]-th one (ML Kit gets the raw YUV frame),
  *    writing one `features` document per face per frame (the same fields as photos, plus
- *    `metadata.frameIndex`, `metadata.frameTimeMs`, `metadata.source = "video"`).
+ *    `metadata.frameIndex`, `metadata.frameTimeMs`, `metadata.source = "video"`), and
+ *    uploads all eye crops of the session as one zip, `eyeRegion/{uid}/{session}.zip`.
  * 3. Deletes the video.
  *
- * Progress is saved every [CHUNK_SIZE] analysed frames, so if WorkManager
- * stops the worker (e.g. its 10-minute limit) the retry resumes where it left off.
- * Document ids are deterministic, so a retry overwrites instead of duplicating.
+ * If the worker is interrupted it retries: the audio upload is not repeated, the frames
+ * are analysed again from the start. Document ids are deterministic, so a retry
+ * overwrites instead of duplicating.
  */
 class VideoProcessingWorker(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {
 
@@ -74,7 +75,7 @@ class VideoProcessingWorker(context: Context, params: WorkerParameters) : Corout
 
     private class Session(val video: File, val startedAt: Long, val seqId: String, val gameId: String, val triggerName: String) {
         val name: String = video.nameWithoutExtension
-        val progressFile = File(video.path + ".progress")
+        val eyeZipFile = File(video.path.removeSuffix(".mp4") + ".eyes.zip")
         val audioDoneFile = File(video.path + ".audio-done")
         val audioFile = File(video.path.removeSuffix(".mp4") + ".m4a")
     }
@@ -167,8 +168,12 @@ class VideoProcessingWorker(context: Context, params: WorkerParameters) : Corout
 
     // --- Video ---------------------------------------------------------------------------
 
+    /**
+     * Analyses the frames, writes `features` documents and uploads the session's eye crops
+     * as one zip. A retry starts over from the first frame (document ids are fixed, so
+     * rewritten documents overwrite the earlier ones).
+     */
     private fun processFrames(session: Session) {
-        val resumeFrom = session.progressFile.takeIf { it.exists() }?.readText()?.trim()?.toIntOrNull() ?: 0
         val rotation = videoRotation(session.video)
         val decoder = VideoFrameDecoder(session.video)
         val startedMs = System.currentTimeMillis()
@@ -180,46 +185,53 @@ class VideoProcessingWorker(context: Context, params: WorkerParameters) : Corout
         var batch = FirebaseRefs.firestore.batch()
         var batchWrites = 0
 
-        FaceFeatureExtractor(applicationContext).use { extractor ->
-            fun checkpoint(nextFrame: Int) {
-                if (batchWrites > 0) {
-                    batch.commit().addOnFailureListener { e -> Log.w(TAG, "Error adding documents", e) }
-                    batch = FirebaseRefs.firestore.batch()
-                    batchWrites = 0
-                }
-                // Resume from the oldest frame whose eye crops are still uploading.
-                val safe = minOf(nextFrame, extractor.oldestPendingFrame() ?: nextFrame)
-                session.progressFile.writeText(maxOf(safe, resumeFrom).toString())
-            }
-
-            decoder.decode { frameIndex, ptsUs, image ->
-                if (firstPtsUs < 0) firstPtsUs = ptsUs
-                lastPtsUs = ptsUs
-                if (frameIndex < resumeFrom || frameIndex % FRAME_STEP != 0) return@decode
-                val frameTimeMs = (ptsUs - firstPtsUs) / 1000
-                val frameName = "${session.name}_f%05d".format(frameIndex)
-                val faces = try {
-                    extractor.analyze(InputImage.fromMediaImage(image, rotation),
-                            YuvFrameCropper(image, rotation, decoder.isBt709),
-                            "${session.video.name}#$frameIndex", frameName, frameIndex)
-                } catch (e: Exception) {
-                    // e.g. an eye partly outside the frame; skip this frame only.
-                    Log.d(TAG, "Frame $frameIndex skipped: $e")
-                    JSONArray()
-                }
-                analysedFrames++
-                for (f in 0 until faces.length()) {
-                    val doc = featureDocument(faces.getJSONObject(f), session, frameIndex, frameTimeMs)
-                    batch.set(FirebaseRefs.firestore.collection(Collections.FEATURES).document("${uid}_${frameName}_$f"), doc)
-                    batchWrites++
-                    faceCount++
-                }
-                if (analysedFrames % CHUNK_SIZE == 0) checkpoint(frameIndex + 1)
-            }
-
-            extractor.awaitUploads()
-            checkpoint(Int.MAX_VALUE)
+        fun commitBatch() {
+            if (batchWrites == 0) return
+            batch.commit().addOnFailureListener { e -> Log.w(TAG, "Error adding documents", e) }
+            batch = FirebaseRefs.firestore.batch()
+            batchWrites = 0
         }
+
+        session.eyeZipFile.delete() // leftover from an interrupted attempt
+        val eyeCrops = ZipEyeCropSink(session.eyeZipFile)
+        eyeCrops.use {
+            FaceFeatureExtractor(applicationContext, eyeCrops).use { extractor ->
+                decoder.decode { frameIndex, ptsUs, image ->
+                    if (firstPtsUs < 0) firstPtsUs = ptsUs
+                    lastPtsUs = ptsUs
+                    if (frameIndex % FRAME_STEP != 0) return@decode
+
+                    val frameTimeMs = (ptsUs - firstPtsUs) / 1000
+                    val frameName = "${session.name}_f%05d".format(frameIndex)
+                    val faces = try {
+                        extractor.analyze(InputImage.fromMediaImage(image, rotation),
+                                YuvFrameCropper(image, rotation, decoder.isBt709),
+                                "${session.video.name}#$frameIndex", frameName)
+                    } catch (e: Exception) {
+                        // e.g. an eye partly outside the frame; skip this frame only.
+                        Log.d(TAG, "Frame $frameIndex skipped: $e")
+                        JSONArray()
+                    }
+                    analysedFrames++
+                    for (f in 0 until faces.length()) {
+                        val doc = featureDocument(faces.getJSONObject(f), session, frameIndex, frameTimeMs)
+                        batch.set(FirebaseRefs.firestore.collection(Collections.FEATURES).document("${uid}_${frameName}_$f"), doc)
+                        batchWrites++
+                        faceCount++
+                    }
+                    if (batchWrites >= BATCH_SIZE) commitBatch()
+                }
+                commitBatch()
+            }
+        }
+
+        if (eyeCrops.count > 0) {
+            val storagePath = FirebaseRefs.Storage.eyeRegionZip(uid, session.name)
+            Tasks.await(FirebaseStorage.getInstance().reference.child(storagePath)
+                    .putFile(Uri.fromFile(session.eyeZipFile)))
+            Log.i(TAG, "Uploaded ${eyeCrops.count} eye crops (${session.eyeZipFile.length() / 1024} KB) to $storagePath")
+        }
+        session.eyeZipFile.delete()
 
         val videoSeconds = (lastPtsUs - maxOf(firstPtsUs, 0L)) / 1e6
         val elapsedSeconds = (System.currentTimeMillis() - startedMs) / 1e3
@@ -262,8 +274,9 @@ class VideoProcessingWorker(context: Context, params: WorkerParameters) : Corout
     }
 
     private fun deleteSessionFiles(video: File) {
-        listOf(video, File(video.path + ".progress"), File(video.path + ".audio-done"),
-                File(video.path.removeSuffix(".mp4") + ".m4a")).forEach { it.delete() }
+        listOf(video, File(video.path + ".audio-done"),
+                File(video.path.removeSuffix(".mp4") + ".m4a"),
+                File(video.path.removeSuffix(".mp4") + ".eyes.zip")).forEach { it.delete() }
     }
 
     companion object {
@@ -283,8 +296,8 @@ class VideoProcessingWorker(context: Context, params: WorkerParameters) : Corout
          */
         const val FRAME_STEP = 1
 
-        /** Analysed frames between progress checkpoints / Firestore batch commits. */
-        private const val CHUNK_SIZE = 30
+        /** Firestore writes per batch commit. */
+        private const val BATCH_SIZE = 200
 
         private const val MAX_ATTEMPTS = 5
     }

@@ -34,7 +34,7 @@ Each recording is then queued to a WorkManager job that:
 2. decodes the video frame by frame and, for each frame, runs **ML Kit** face detection (landmarks, contours, head pose, eye/smile probabilities) and a **LiteRT** (TensorFlow Lite) model (`AU_200.tflite`) that estimates 12 facial action units, writing one Firestore `features` document per face and uploading eye-region crops to Cloud Storage;
 3. deletes the video.
 
-Recording uses CameraX `VideoCapture` (1080p, ~30 fps) into app-private storage — no gallery folder and no storage permission. By default every frame is analysed (`VideoProcessingWorker.FRAME_STEP = 1`); set `FRAME_STEP = 3` for ~10 fps (the old photo rate) at about a third of the processing and upload cost.
+Recording uses CameraX `VideoCapture` (1080p, ~30 fps) into app-private storage — no gallery folder and no storage permission. By default every frame is analysed (`VideoProcessingWorker.FRAME_STEP = 1`), which takes about 5x the video length on a Pixel 10 when a face is in every frame; set `FRAME_STEP = 3` for ~10 fps (the old photo rate) at about a third of the cost. Eye crops of a video session are uploaded as one zip.
 
 A foreground service keeps collection running. It mirrors the study config from Firestore, reports presence, and is restarted after reboots and crashes.
 

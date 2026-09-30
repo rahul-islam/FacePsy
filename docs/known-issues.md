@@ -73,11 +73,12 @@ These were found during the refactor and verified on a Pixel 10 (Android 17) on
 7. **Unguarded static state.** `CaptureTriggerReceiver.isCapturing` and the
    `SensingService` config maps are mutable statics without synchronization.
 8. **Video processing is expensive at full frame rate.** With
-   `VideoProcessingWorker.FRAME_STEP = 1`, a 59.9 s session (1,787 frames) took about
-   11.5 minutes to process on a Pixel 10, and Firestore writes and eye-crop uploads are
-   about 3x the old 10 fps photo pipeline. Set `FRAME_STEP = 3` for ~10 fps at roughly a
-   third of the cost. Video processing needs a network connection and can lag well behind
-   capture on a busy phone.
+   `VideoProcessingWorker.FRAME_STEP = 1` and a face in every frame, processing takes
+   about 5x the video length on a Pixel 10 (a 9.6 s session: 46.9 s), mostly ML Kit's
+   accurate mode (~72 ms/frame) and the per-face AU/crop work (~40 ms). Firestore writes
+   are about 3x the old 10 fps photo pipeline, and a session's eye-crop zip is roughly
+   0.6 MB per second of video. Set `FRAME_STEP = 3` for ~10 fps at roughly a third of
+   the cost. Processing needs a network connection and can lag behind capture.
 9. **Raw audio is uploaded and can record bystanders.** Each session's audio track is
    uploaded to Storage `audio/` and referenced from `audioRecordings`. It may contain the
    voices of people who did not consent; cover this in the consent form and IRB protocol,

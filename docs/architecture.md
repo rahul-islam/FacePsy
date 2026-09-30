@@ -23,7 +23,7 @@ flowchart LR
     W -->|"audio track (.m4a)"| SA[(Cloud Storage<br/>audio/)]
     W -->|"one doc per session"| AR[(Firestore<br/>audioRecordings)]
     W -->|"per frame: FaceFeatureExtractor<br/>ML Kit + AU_200.tflite"| W
-    W -->|"eye crops"| S[(Cloud Storage<br/>eyeRegion/)]
+    W -->|"eye crops (one zip per session)"| S[(Cloud Storage<br/>eyeRegion/)]
     W -->|"one doc per face per frame"| FS[(Firestore<br/>features)]
 
     A -->|"foreground app"| PU[(Firestore<br/>phoneUsageData)]
@@ -48,24 +48,29 @@ flowchart LR
 3. **Audio.** The worker copies the audio track into an `.m4a` without re-encoding,
    uploads it to Storage `audio/{uid}/{session}.m4a` and writes
    `audioRecordings/{uid}_{session}`.
-4. **Frames.** The worker decodes every `FRAME_STEP`-th frame (`1` = every frame) in
-   chunks of 5 and runs `processing/FaceFeatureExtractor` on each. For every face it:
+4. **Frames.** `processing/VideoFrameDecoder` decodes the video with the hardware decoder
+   (MediaCodec) and every `FRAME_STEP`-th frame (`1` = every frame) goes to
+   `processing/FaceFeatureExtractor`: ML Kit gets the raw YUV frame (`fromMediaImage` +
+   the video's rotation), and only the face and eye regions are converted to RGB
+   (`processing/FrameCropper`). For every face it:
    - runs `assets/AU_200.tflite` (LiteRT) on a 200x200 grayscale face crop to estimate
      12 FACS action units;
-   - uploads left/right eye crops to Storage `eyeRegion/`;
+   - adds left/right eye crops to the session zip (`ZipEyeCropSink`);
    - writes one `features` document (batched writes, deterministic ids).
-5. **Clean up.** The video is deleted. Progress is saved after each chunk (`.progress`)
-   and after the audio upload (`.audio-done`), so a stopped or retried worker resumes
-   without duplicating uploads or documents.
+5. **Eye crops.** The session zip is uploaded once to `eyeRegion/{uid}/{session}.zip`.
+6. **Clean up.** The video and zip are deleted. The audio upload is marked done
+   (`.audio-done`); an interrupted worker retries and analyses the frames again from the
+   start, overwriting the same document ids.
 
 `FaceFeatureExtractor` is also used by `ImageProcessingWorker`, which is kept only to
 process photo jobs that were still queued when a participant updated from the older
 photo-based version. The extractor loads ML Kit and the AU model once per worker run.
 
-**Cost.** With `FRAME_STEP = 1`, a 59.9 s session (1,787 frames) took about 11.5 minutes
-to process on a Pixel 10, and Firestore writes and eye-crop uploads are about 3x the old
-10 fps photo pipeline. `FRAME_STEP = 3` analyses ~10 fps (the old rate) at roughly a
-third of the cost. See [known-issues.md](known-issues.md).
+**Cost.** With `FRAME_STEP = 1` and a face in every frame, processing takes about 5x the
+video length on a Pixel 10, dominated by ML Kit's accurate mode (~72 ms/frame) and the
+per-face AU and crop work (~40 ms). Decoding (~9 ms/frame) and uploads (one zip per
+session) are no longer bottlenecks. `FRAME_STEP = 3` analyses ~10 fps (the old rate) at
+roughly a third of the cost. See [known-issues.md](known-issues.md).
 
 ## Service lifecycle
 
@@ -151,6 +156,9 @@ com.rahulislam.facepsy
 ├── processing/
 │   ├── VideoProcessingWorker     audio upload + per-frame feature extraction of a session
 │   ├── FaceFeatureExtractor      ML Kit + AU model + eye crops for one image/frame
+│   ├── VideoFrameDecoder         hardware (MediaCodec) frame decoding
+│   ├── FrameCropper              upright RGB crops from a Bitmap or a YUV frame
+│   ├── EyeCropSink               eye crops: per-file upload (photos) or session zip (video)
 │   └── ImageProcessingWorker     legacy: drains photo jobs queued before the update
 ├── messaging/
 │   └── FacePsyMessagingService   FCM notifications

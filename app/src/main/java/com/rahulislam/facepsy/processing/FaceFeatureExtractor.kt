@@ -3,17 +3,12 @@ package com.rahulislam.facepsy.processing
 import android.content.Context
 import android.graphics.*
 import android.util.Log
-import com.google.android.gms.tasks.Task
 import com.google.android.gms.tasks.Tasks
-import com.google.firebase.auth.FirebaseAuth
-import com.google.firebase.storage.FirebaseStorage
 import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.face.Face
 import com.google.mlkit.vision.face.FaceContour
 import com.google.mlkit.vision.face.FaceDetection
 import com.google.mlkit.vision.face.FaceDetectorOptions
-import com.rahulislam.facepsy.data.FirebaseRefs
-import kotlin.collections.ArrayDeque
 import org.json.JSONArray
 import org.json.JSONObject
 import org.tensorflow.lite.DataType
@@ -33,14 +28,15 @@ import java.nio.ByteOrder
  * For each face ML Kit finds it:
  * 1. runs the `AU_200.tflite` model (LiteRT) on a 200x200 grayscale face crop to
  *    estimate 12 facial action unit intensities ([ACTION_UNITS]);
- * 2. uploads left/right eye-region PNG crops to Cloud Storage `eyeRegion/{uid}/`;
+ * 2. hands left/right eye-region PNG crops to an [EyeCropSink] (uploaded individually for
+ *    photos, zipped per session for video);
  * 3. returns landmarks, contours, bounding box, head Euler angles, classification
  *    probabilities and AUs as one JSON object (see `docs/data-schema.md`).
  *
  * Create one instance per worker run and [close] it: the detector and the AU model are
  * loaded once and reused for every image.
  */
-class FaceFeatureExtractor(private val context: Context) : Closeable {
+class FaceFeatureExtractor(private val context: Context, private val eyeCrops: EyeCropSink) : Closeable {
 
     private val detector = FaceDetection.getClient(
             FaceDetectorOptions.Builder()
@@ -60,61 +56,25 @@ class FaceFeatureExtractor(private val context: Context) : Closeable {
         }
     }
 
-    /** In-flight eye-crop uploads, oldest first, with the frame they belong to. */
-    private val pendingUploads = ArrayDeque<Pair<Int, Task<*>>>()
-
     /**
      * Detects faces in [image] and returns one feature JSON object per face.
      *
      * @param frame the same frame as upright full-color crops, for the face and eye crops.
      * @param sourceName stored as `fileName` in the feature JSON.
-     * @param imageBaseName used to name the eye crops (`{imageBaseName}_LEFT.png`).
-     * @param frameIndex tags the eye-crop uploads, see [oldestPendingFrame].
+     * @param imageBaseName names the eye crops given to the [EyeCropSink].
      * Throws if detection fails or an eye contour is missing / outside the frame.
      */
-    fun analyze(image: InputImage, frame: FrameCropper, sourceName: String, imageBaseName: String, frameIndex: Int = 0): JSONArray {
+    fun analyze(image: InputImage, frame: FrameCropper, sourceName: String, imageBaseName: String): JSONArray {
         val faces = Tasks.await(detector.process(image))
 
         val jsonArray = JSONArray()
-        for (face in faces) {
+        for ((faceIndex, face) in faces.withIndex()) {
             val auObj = computeActionUnits(face, frame)
-            uploadEyeRegion(frame, face, FaceContour.LEFT_EYE, "LEFT", imageBaseName, frameIndex)
-            uploadEyeRegion(frame, face, FaceContour.RIGHT_EYE, "RIGHT", imageBaseName, frameIndex)
+            saveEyeRegion(frame, face, FaceContour.LEFT_EYE, "LEFT", imageBaseName, faceIndex)
+            saveEyeRegion(frame, face, FaceContour.RIGHT_EYE, "RIGHT", imageBaseName, faceIndex)
             jsonArray.put(buildFaceJson(face, sourceName, auObj))
         }
-        throttleUploads()
         return jsonArray
-    }
-
-    /** Blocks only while more than [MAX_UPLOADS_IN_FLIGHT] eye crops are uploading. */
-    private fun throttleUploads() {
-        dropFinishedUploads()
-        while (pendingUploads.size > MAX_UPLOADS_IN_FLIGHT) {
-            awaitQuietly(pendingUploads.removeFirst().second)
-        }
-    }
-
-    /** Waits until every eye-crop upload started so far has finished (success or not). */
-    fun awaitUploads() {
-        while (pendingUploads.isNotEmpty()) awaitQuietly(pendingUploads.removeFirst().second)
-    }
-
-    /** Frame index of the oldest eye-crop upload still running, or null if none. */
-    fun oldestPendingFrame(): Int? {
-        dropFinishedUploads()
-        return pendingUploads.firstOrNull()?.first
-    }
-
-    private fun dropFinishedUploads() {
-        while (pendingUploads.isNotEmpty() && pendingUploads.first().second.isComplete) pendingUploads.removeFirst()
-    }
-
-    private fun awaitQuietly(task: Task<*>) {
-        try {
-            Tasks.await(task)
-        } catch (e: Exception) {
-            Log.i(TAG, "FAIL")
-        }
     }
 
     override fun close() {
@@ -180,11 +140,10 @@ class FaceFeatureExtractor(private val context: Context) : Closeable {
 
     /**
      * Crops the eye described by [contourType] (with [EYE_CROP_MARGIN_PX] of margin on
-     * each side) from [frame] and starts uploading it as a PNG to
-     * `eyeRegion/{uid}/{imageBaseName}_{side}.png`. Throws if the contour is missing or
-     * the crop falls outside the frame.
+     * each side) from [frame] and hands it as a PNG to [eyeCrops]. Throws if the contour
+     * is missing or the crop falls outside the frame.
      */
-    private fun uploadEyeRegion(frame: FrameCropper, face: Face, contourType: Int, side: String, imageBaseName: String, frameIndex: Int) {
+    private fun saveEyeRegion(frame: FrameCropper, face: Face, contourType: Int, side: String, imageBaseName: String, faceIndex: Int) {
         val eyeContour = face.getContour(contourType)?.points!!
 
         val left = eyeContour[0].x.toInt() - EYE_CROP_MARGIN_PX
@@ -194,16 +153,9 @@ class FaceFeatureExtractor(private val context: Context) : Closeable {
 
         val eyeCrop = frame.crop(Rect(left, top, left + width, top + height))
 
-        val uid = FirebaseAuth.getInstance().currentUser?.uid.toString()
-        val eyeRegionRef = FirebaseStorage.getInstance().reference
-                .child(FirebaseRefs.Storage.eyeRegion(uid, imageBaseName, side))
-
         val baos = ByteArrayOutputStream()
         eyeCrop.compress(Bitmap.CompressFormat.PNG, 100, baos)
-
-        pendingUploads.addLast(frameIndex to eyeRegionRef.putBytes(baos.toByteArray())
-                .addOnFailureListener { Log.i(TAG, "FAIL") }
-                .addOnSuccessListener { Log.i(TAG, FirebaseAuth.getInstance().currentUser?.uid.toString()) })
+        eyeCrops.add(imageBaseName, faceIndex, side, baos.toByteArray())
     }
 
     /** Serializes ML Kit's results for [face] plus the action units [auObj]. */
@@ -259,8 +211,5 @@ class FaceFeatureExtractor(private val context: Context) : Closeable {
 
         /** Padding added around each side of the eye contour when cropping. */
         const val EYE_CROP_MARGIN_PX = 20
-
-        /** Eye-crop uploads allowed to run in the background before analysis waits. */
-        private const val MAX_UPLOADS_IN_FLIGHT = 40
     }
 }
